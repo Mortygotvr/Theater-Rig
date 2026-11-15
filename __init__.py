@@ -1,11 +1,15 @@
 """Theater Rig: prepares VRM and GLB avatars for the Theater avatar renderer by
 renaming parts to its convention (see conventions.py)."""
 
+# Already loaded once: this is Reload Scripts (F3), so the other files reload too
+_reloading = "bpy" in locals()
+
 import os
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
 
+from . import conventions
 from . import analyse as an
 from . import align
 from . import colour
@@ -15,6 +19,13 @@ from . import rename
 from . import springs
 from . import strip
 from . import tpose
+
+if _reloading:
+    import importlib
+
+    # Dependencies first: conventions, then analyse, then what uses them
+    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, export, strip):
+        importlib.reload(_module)
 
 REPORT_TEXT = "Theater Rig report"
 
@@ -92,8 +103,8 @@ class THEATERRIG_OT_pick_texture(bpy.types.Operator):
 
 
 class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
-    """Makes a greyscale copy of the texture named Color<N>; the materials using it get
-    Color<N> in their name and keep its colour as their tint. Undo with Ctrl+Z"""
+    """Makes a greyscale copy of the texture named Color<N>; the materials using it turn
+    grey, get Color<N> in their name, and keep their old colour as 'color_default'. Undo with Ctrl+Z"""
 
     bl_idname = "theater_rig.make_color_slot"
     bl_label = "Make Colour Slot"
@@ -115,12 +126,13 @@ class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
 
 
 class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
-    """Exports the avatar as a GLB with the options the renderer needs
-    (custom properties, shape keys, skin; no animation, modifiers not applied)"""
+    """Removes the VRM colliders and VRM data, then exports the avatar as a GLB with the
+    options the renderer needs (custom properties, shape keys, skin; no animation).
+    Ctrl+Z brings the colliders and VRM data back"""
 
     bl_idname = "theater_rig.export"
     bl_label = "Export GLB"
-    bl_options = {"REGISTER"}
+    bl_options = {"REGISTER", "UNDO"}
 
     filename_ext = ".glb"
     filter_glob: bpy.props.StringProperty(default="*.glb", options={"HIDDEN"})
@@ -133,27 +145,15 @@ class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        arm, found = export.export_glb(context, self.filepath)
+        arm, found, colliders = export.export_glb(context, self.filepath)
         if arm is None:
             self.report({"ERROR"}, "No armature")
             return {"CANCELLED"}
+        done = f"Exported {os.path.basename(self.filepath)} ({colliders} collider object(s) and the VRM data removed)"
         if found:
-            self.report({"WARNING"}, f"Exported, but: {'; '.join(found)}")
+            self.report({"WARNING"}, f"{done}, but: {'; '.join(found)}")
         else:
-            self.report({"INFO"}, f"Exported {os.path.basename(self.filepath)}")
-        return {"FINISHED"}
-
-
-class THEATERRIG_OT_remove_vrm(bpy.types.Operator):
-    """Removes the VRM add-on's data (humanoid, springs, MToon, meta). Run it last. Undo with Ctrl+Z"""
-
-    bl_idname = "theater_rig.remove_vrm"
-    bl_label = "Remove VRM Data"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        n = strip.remove_vrm_data()
-        self.report({"INFO"}, f"Removed VRM data from {n} datablock(s)")
+            self.report({"INFO"}, done)
         bpy.ops.theater_rig.analyse()
         return {"FINISHED"}
 
@@ -270,8 +270,7 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         box.prop(st, "color_slot", text="Color")
         box.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
         lay.separator()
-        lay.label(text="Last, once the steps above are done:")
-        lay.operator(THEATERRIG_OT_remove_vrm.bl_idname, icon="TRASH")
+        lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
 
 
@@ -286,7 +285,6 @@ CLASSES = (
     THEATERRIG_OT_pick_texture,
     THEATERRIG_OT_make_color_slot,
     THEATERRIG_OT_export,
-    THEATERRIG_OT_remove_vrm,
     THEATERRIG_PT_panel,
 )
 

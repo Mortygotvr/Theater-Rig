@@ -1,10 +1,10 @@
 """Colour slots: a texture becomes greyscale and follows colour slot N.
 
-The grey copy is each pixel's brightest channel, and the texture's own colour
-goes on the material's Multiply node (the glTF base colour factor), so
-the avatar looks as before until the renderer swaps that factor for slot N's
-colour. The copy, and every material using the texture, gets Color<N> in its
-name. The original image is kept, unused."""
+The grey copy is each pixel's brightest channel, and the material goes plain
+grey (no colour factor): the renderer multiplies it by slot N's colour. The
+colour it had is kept as the material property `color_default` (glTF extras),
+a starting colour for the slot. The copy, and every material using the
+texture, gets Color<N> in its name. The original image is kept, unused."""
 
 import re
 
@@ -12,6 +12,8 @@ import bpy
 import numpy as np
 
 from . import conventions as cv
+
+DEFAULT_PROP = "color_default"
 
 def _base_link(mat):
     """(image node, multiply node or None) feeding the Principled Base Color."""
@@ -83,20 +85,14 @@ def make_color_slot(image, slot):
 
     for mat in users:
         tex, mix = _base_link(mat)
-        # Whatever factor the material had stays on top of the texture's colour
+        # The colour it showed (its factor on top of the texture's) is kept as a
+        # property only; the material itself goes plain grey
         factor = np.array(mix.inputs["B"].default_value[:3]) if mix else np.ones(3)
-        colour = np.clip(factor * tint, 0.0, 1.0)
+        mat[DEFAULT_PROP] = [float(c) for c in np.clip(factor * tint, 0.0, 1.0)]
         tex.image = grey
-        if mix is None:
-            nodes, links = mat.node_tree.nodes, mat.node_tree.links
-            bsdf = next(n for n in nodes if n.type == "BSDF_PRINCIPLED")
-            mix = nodes.new("ShaderNodeMix")
-            mix.data_type = "RGBA"
-            mix.blend_type = "MULTIPLY"
-            mix.location = (tex.location.x + 350, tex.location.y + 50)
-            mix.inputs["Factor"].default_value = 1.0
-            links.new(tex.outputs["Color"], mix.inputs["A"])
-            links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
-        mix.inputs["B"].default_value = (*colour, 1.0)
+        if mix is not None:
+            bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+            mat.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+            mat.node_tree.nodes.remove(mix)
         mat.name = slot_name(mat.name, slot)
     return grey, users

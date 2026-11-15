@@ -71,9 +71,12 @@ mats = [m for m in bpy.data.materials if col.base_image(m) == grey]
 print(f"  materials now on it: {[m.name for m in mats]} (were {users_before})")
 if len(mats) != len(users_before) or not all("Color2" in m.name for m in mats):
     problems.append("materials not all moved to the grey texture / renamed")
-# Grey x tint should give back the original colour on average
+# The material is plain grey now; its old colour is kept as color_default,
+# and grey x color_default should give back what it showed, on average
 _, mix = col._base_link(mats[0])
-tint = np.array(mix.inputs["B"].default_value[:3])
+if mix is not None:
+    problems.append("material still tinted (Multiply node left)")
+tint = np.array(mats[0]["color_default"])
 recon = (g[seen, :3] * tint).mean(axis=0)
 print(f"  tint {np.round(tint, 3)}; average colour original {np.round(orig_mean, 3)}, grey x tint {np.round(recon, 3)}")
 if np.abs(recon - orig_mean).max() > 0.03:
@@ -98,8 +101,11 @@ else:
     tex_i = gm["pbrMetallicRoughness"]["baseColorTexture"]["index"]
     img_name = gltf["images"][gltf["textures"][tex_i]["source"]]["name"]
     print(f"  GLB {gm['name']}: factor {factor}, image {img_name}, extras {gm.get('extras')}")
-    if not factor or abs(factor[0] - tint[0]) > 1e-3:
-        problems.append("tint not exported as the base colour factor")
+    if factor and any(abs(f - 1) > 1e-4 for f in factor[:3]):
+        problems.append("GLB material still has a colour factor")
+    cd = gm.get("extras", {}).get("color_default")
+    if not cd or np.abs(np.array(cd) - tint).max() > 1e-3:
+        problems.append("color_default not in the GLB extras")
     if "Color2" not in img_name:
         problems.append("GLB image not named Color2")
     if "shade_color" not in gm.get("extras", {}):

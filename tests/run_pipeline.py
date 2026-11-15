@@ -1,6 +1,6 @@
 """Headless test of every button in order, on a VRM:
 Detoonify, Rename Bones, Rename Springs, Align Bones, T-Pose (no-op, then on an
-A-posed copy), Remove VRM Data, then a GLB export.
+A-posed copy), then Export GLB (which removes the colliders and VRM data).
 
 blender --background --python tests/run_pipeline.py -- <model.vrm> <out.glb>
 """
@@ -125,7 +125,15 @@ print(f"  left hand height vs shoulder: {(arm_z - shoulder_z) * 100:.1f} cm")
 if abs(arm_z - shoulder_z) > 0.02:
     problems.append("left hand not at shoulder height after T-pose")
 
-print("remove_vrm:", ops.remove_vrm())
+strip = sys.modules["theater_rig.strip"]
+colliders_before = {o.name for c in strip.collider_objects(arm) for o in strip._tree(c)}
+print(f"  collider objects before export: {len(colliders_before)}, sample {sorted(colliders_before)[:3]}")
+if not colliders_before:
+    problems.append("no collider objects found to remove")
+print("export:", ops.export(filepath=out))
+left = [n for n in colliders_before if n in bpy.data.objects]
+if left:
+    problems.append(f"colliders left in the scene: {left[:3]}")
 # The VRM add-on, while enabled, re-creates empty defaults: check they hold nothing
 ext = arm.data.vrm_addon_extension
 humanoid_left = [b.node.bone_name for b in ext.vrm0.humanoid.human_bones if b.node.bone_name]
@@ -139,9 +147,12 @@ print(f"  after removal: roles {len(rep.roles)} (from {rep.roles[0].source if re
 if len(rep.roles) < 54 or len(rep.springs) != 17:
     problems.append(f"Analyse after removal: {len(rep.roles)} roles, {len(rep.springs)} springs")
 
-bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_extras=True)
 data = open(out, "rb").read()
 gltf = json.loads(data[20:20 + struct.unpack_from("<I", data, 12)[0]])
+glb_colliders = [n.get("name") for n in gltf["nodes"] if "collider" in n.get("name", "").lower()]
+print(f"  GLB nodes: {len(gltf['nodes'])}, collider nodes: {len(glb_colliders)}")
+if glb_colliders:
+    problems.append(f"colliders in the GLB: {glb_colliders[:3]}")
 node = next((n for n in gltf["nodes"] if n.get("name") == "spring_hair_1_0"), None)
 print("  GLB spring_hair_1_0 extras:", node.get("extras") if node else None)
 if not node or "spring_stiffness" not in node.get("extras", {}):

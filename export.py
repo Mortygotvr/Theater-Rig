@@ -1,5 +1,6 @@
 """Export: the avatar (armature and the meshes it deforms) as a GLB with the
-options the renderer needs. Custom properties go in as extras (shade_color,
+options the renderer needs. First the VRM colliders and VRM data go (see
+strip.py). Custom properties go in as extras (shade_color, color_default,
 spring settings); shape keys and skin are kept; modifiers aren't applied
 (that would drop the shape keys)."""
 
@@ -7,6 +8,7 @@ import bpy
 
 from . import analyse as an
 from . import detoon
+from . import strip
 
 
 def avatar_objects(arm):
@@ -30,17 +32,23 @@ def warnings(arm):
 
 
 def export_glb(context, filepath):
+    """Warns about skipped steps, removes the colliders and the VRM data from the
+    scene (Ctrl+Z brings them back), then exports. Returns (armature, warnings,
+    colliders removed)."""
     arm = an.find_armature(context)
     if arm is None:
-        return None, []
+        return None, [], 0
     found = warnings(arm)
+    if context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    colliders = strip.remove_colliders(arm)
+    strip.remove_vrm_data()
+    context.view_layer.update()   # drop the deleted objects from the view layer's list
     objs = avatar_objects(arm)
     # Select just the avatar for the export, then put the selection back
     view_layer = context.view_layer
     was_selected = [o for o in view_layer.objects if o.select_get()]
     was_active = view_layer.objects.active
-    if context.mode != "OBJECT":
-        bpy.ops.object.mode_set(mode="OBJECT")
     for o in view_layer.objects:
         o.select_set(o in objs)
     try:
@@ -59,4 +67,4 @@ def export_glb(context, filepath):
         for o in view_layer.objects:
             o.select_set(o in was_selected)
         view_layer.objects.active = was_active
-    return arm, found
+    return arm, found, colliders
