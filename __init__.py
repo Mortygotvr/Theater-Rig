@@ -18,13 +18,14 @@ from . import export
 from . import rename
 from . import springs
 from . import strip
+from . import tiles
 from . import tpose
 
 if _reloading:
     import importlib
 
     # Dependencies first: conventions, then analyse, then what uses them
-    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, export, strip):
+    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, strip, tiles, export):
         importlib.reload(_module)
 
 REPORT_TEXT = "Theater Rig report"
@@ -145,11 +146,12 @@ class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        arm, found, colliders = export.export_glb(context, self.filepath)
+        arm, found, colliders, tiled = export.export_glb(context, self.filepath)
         if arm is None:
             self.report({"ERROR"}, "No armature")
             return {"CANCELLED"}
-        done = f"Exported {os.path.basename(self.filepath)} ({colliders} collider object(s) and the VRM data removed)"
+        kept = f", {tiled} tile texture expression(s) kept" if tiled else ""
+        done = f"Exported {os.path.basename(self.filepath)} ({colliders} collider object(s) and the VRM data removed{kept})"
         if found:
             self.report({"WARNING"}, f"{done}, but: {'; '.join(found)}")
         else:
