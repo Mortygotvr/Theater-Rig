@@ -20,12 +20,18 @@ from . import springs
 from . import strip
 from . import tiles
 from . import tpose
+from . import spring_preview
 
 if _reloading:
     import importlib
 
     # Dependencies first: conventions, then analyse, then what uses them
-    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, strip, tiles, export):
+    # (A preview running is stopped first: its timer calls the old module)
+    try:
+        spring_preview.stop()
+    except Exception:
+        pass
+    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, strip, tiles, export, spring_preview):
         importlib.reload(_module)
 
 REPORT_TEXT = "Theater Rig report"
@@ -305,6 +311,32 @@ class THEATERRIG_OT_analyse(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_spring_preview(bpy.types.Operator):
+    """Swings the spring chains (spring_<kind>_<n>) as Theater Puppet does: move the
+    armature, pose it or play an animation to see them. Click again to stop: every
+    bone goes back as it was"""
+
+    bl_idname = "theater_rig.spring_preview"
+    bl_label = "Spring Preview"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        if spring_preview.running():
+            spring_preview.stop()
+            self.report({"INFO"}, "Spring preview stopped: the bones are back as they were")
+            return {"FINISHED"}
+        arm = an.find_armature(context)
+        if arm is None:
+            self.report({"ERROR"}, "No armature")
+            return {"CANCELLED"}
+        if not spring_preview.roots(arm):
+            self.report({"ERROR"}, "No spring_<kind>_<n> chains: Rename Springs first")
+            return {"CANCELLED"}
+        p = spring_preview.start(arm)
+        self.report({"INFO"}, f"Spring preview: {len(spring_preview.roots(arm))} chain(s), {len(p.joints)} bone(s), {len(p.colliders)} collider(s)")
+        return {"FINISHED"}
+
+
 class TheaterRigState(bpy.types.PropertyGroup):
     analysed: bpy.props.BoolProperty()
     armature: bpy.props.StringProperty()
@@ -326,6 +358,9 @@ class TheaterRigState(bpy.types.PropertyGroup):
     tile_rows: bpy.props.IntProperty(name="Rows", min=1, max=64, default=2)
     tile_names: bpy.props.StringProperty(name="Names", description="The tiles' names, comma-separated, across then down (a blank one: <texture>_<cell>)")
     tile_set: bpy.props.StringProperty(name="Set", description="The set these tiles make (\"next\" and \"random\" go through a set); empty: the texture's name")
+    spring_sway: bpy.props.BoolProperty(name="Sway the body", description="Turns the hips back and forth while the preview runs (a test without touching anything)")
+    spring_show_colliders: bpy.props.BoolProperty(name="Show colliders", default=True, description="Draws the capsules Theater Puppet pushes the springs out of")
+    spring_colliders_thick: bpy.props.FloatProperty(name="Colliders thickness", default=1.0, min=0.0, max=3.0, description="As the Puppet source's colliders setting: a multiplier")
     tile_default: bpy.props.IntProperty(name="Default cell", min=0, description="The cell showing when no tile is on (only for a mesh whose UVs cover the whole sheet)")
 
 
@@ -382,6 +417,28 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
             shown = ", ".join(names[:5]) + (" ..." if len(names) > 5 else "")
             row.label(text=f"{group or '(no set)'}: {shown}", icon="TEXTURE")
             row.operator(THEATERRIG_OT_remove_tile_set.bl_idname, text="", icon="X").set_name = group
+        box = lay.box()
+        box.label(text="Spring preview (as Theater Puppet swings them)", icon="FORCE_WIND")
+        on = spring_preview.running()
+        box.operator(THEATERRIG_OT_spring_preview.bl_idname, text="Stop Spring Preview" if on else "Start Spring Preview", icon="PAUSE" if on else "PLAY", depress=on)
+        box.prop(st, "spring_sway")
+        row = box.row(align=True)
+        row.prop(st, "spring_show_colliders")
+        row.prop(st, "spring_colliders_thick", text="Thickness")
+        chains = spring_preview.roots(arm) if arm else []
+        if chains:
+            box.label(text="Each chain (on its root bone; Export keeps them):")
+            for bone in chains:
+                sub = box.box()
+                sub.label(text=bone.name[:-2], icon="BONE_DATA")
+                if all(f"spring_{k}" in bone.keys() for k in spring_preview.DEFAULTS):
+                    grid = sub.grid_flow(columns=2, align=True)
+                    for k in spring_preview.DEFAULTS:
+                        grid.prop(bone, f'["spring_{k}"]', text=k.capitalize())
+                else:
+                    sub.label(text="Puppet's defaults (the preview adds them)")
+        else:
+            box.label(text="No spring chains yet: Rename Springs first.")
         lay.separator()
         lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
@@ -401,6 +458,7 @@ CLASSES = (
     THEATERRIG_OT_make_tiles,
     THEATERRIG_OT_convert_tiles,
     THEATERRIG_OT_remove_tile_set,
+    THEATERRIG_OT_spring_preview,
     THEATERRIG_OT_export,
     THEATERRIG_PT_panel,
 )
@@ -410,9 +468,14 @@ def register():
     for c in CLASSES:
         bpy.utils.register_class(c)
     bpy.types.Scene.theater_rig = bpy.props.PointerProperty(type=TheaterRigState)
+    if spring_preview._on_load not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(spring_preview._on_load)
 
 
 def unregister():
+    spring_preview.stop()
+    if spring_preview._on_load in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(spring_preview._on_load)
     del bpy.types.Scene.theater_rig
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)
