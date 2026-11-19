@@ -103,6 +103,77 @@ class THEATERRIG_OT_pick_texture(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_pick_tile_texture(bpy.types.Operator):
+    """Takes the base colour texture of the selected object's active material"""
+
+    bl_idname = "theater_rig.pick_tile_texture"
+    bl_label = "Pick from Selected"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        img, mat = colour.image_of_selection(context)
+        if img is None:
+            self.report({"ERROR"}, f"No base colour texture on {mat.name if mat else 'the selection'}")
+            return {"CANCELLED"}
+        context.scene.theater_rig.tile_image = img
+        self.report({"INFO"}, f"{img.name} (from {mat.name})")
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_make_tiles(bpy.types.Operator):
+    """Splits the texture into a grid of named tiles (across then down) on every material
+    using it, kept on the armature for Export. Tiles made before on those materials are
+    replaced. Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.make_tiles"
+    bl_label = "Make Tiles"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        st = context.scene.theater_rig
+        arm = an.find_armature(context)
+        if arm is None:
+            self.report({"ERROR"}, "No armature")
+            return {"CANCELLED"}
+        if st.tile_image is None:
+            self.report({"ERROR"}, "Choose a texture first")
+            return {"CANCELLED"}
+        try:
+            count, kinds = tiles.make(arm, st.tile_image, st.tile_columns, st.tile_rows, st.tile_names, st.tile_default)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        moved = [m for m, k in kinds.items() if k == "cell"]
+        how = f"{len(moved)} already on one cell (moved)" if moved else ""
+        shrunk = [m for m, k in kinds.items() if k == "sheet"]
+        if shrunk:
+            how += (", " if how else "") + f"{len(shrunk)} over the whole sheet (now showing cell {st.tile_default})"
+        self.report({"INFO"}, f"{count} tile(s) on {len(kinds)} material(s): {how}")
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_clear_tiles(bpy.types.Operator):
+    """Removes the tiles on the materials using the texture (the VRM's own come back at Export).
+    Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.clear_tiles"
+    bl_label = "Remove These Tiles"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        st = context.scene.theater_rig
+        arm = an.find_armature(context)
+        if arm is None or st.tile_image is None:
+            self.report({"ERROR"}, "No armature or no texture")
+            return {"CANCELLED"}
+        names = {m.name for m in tiles.materials_using(st.tile_image)}
+        before = tiles.stored(arm)
+        kept = {n: b for n, b in before.items() if not all(x["material"] in names for x in b)}
+        arm[tiles.PROP] = tiles.json.dumps(kept)
+        self.report({"INFO"}, f"Removed {len(before) - len(kept)} tile(s)")
+        return {"FINISHED"}
+
+
 class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
     """Makes a greyscale copy of the texture named Color<N>; the materials using it turn
     grey, get Color<N> in their name, and keep their old colour as 'color_default'. Undo with Ctrl+Z"""
@@ -234,6 +305,11 @@ class TheaterRigState(bpy.types.PropertyGroup):
     color_slots: bpy.props.IntProperty()
     color_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
     color_slot: bpy.props.IntProperty(name="Slot", min=0, max=99)
+    tile_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
+    tile_columns: bpy.props.IntProperty(name="Columns", min=1, max=64, default=2)
+    tile_rows: bpy.props.IntProperty(name="Rows", min=1, max=64, default=2)
+    tile_names: bpy.props.StringProperty(name="Names", description="The tiles' names, comma-separated, across then down (a blank one: <texture>_<cell>)")
+    tile_default: bpy.props.IntProperty(name="Default cell", min=0, description="The cell showing when no tile is on (only for a mesh whose UVs cover the whole sheet)")
 
 
 class THEATERRIG_PT_panel(bpy.types.Panel):
@@ -271,6 +347,22 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         box.prop_search(st, "color_image", bpy.data, "images", text="")
         box.prop(st, "color_slot", text="Color")
         box.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
+        box = lay.box()
+        box.label(text="Tile textures", icon="TEXTURE")
+        box.operator(THEATERRIG_OT_pick_tile_texture.bl_idname, icon="EYEDROPPER")
+        box.prop_search(st, "tile_image", bpy.data, "images", text="")
+        row = box.row(align=True)
+        row.prop(st, "tile_columns")
+        row.prop(st, "tile_rows")
+        box.prop(st, "tile_names", text="Names")
+        box.prop(st, "tile_default")
+        box.operator(THEATERRIG_OT_make_tiles.bl_idname, icon="MESH_GRID")
+        arm = an.find_armature(context)
+        made = tiles.stored(arm) if arm else {}
+        if made:
+            shown = ", ".join(sorted(made)[:6]) + (" ..." if len(made) > 6 else "")
+            box.label(text=f"{len(made)} tile(s): {shown}")
+            box.operator(THEATERRIG_OT_clear_tiles.bl_idname, icon="X")
         lay.separator()
         lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
@@ -286,6 +378,9 @@ CLASSES = (
     THEATERRIG_OT_tpose,
     THEATERRIG_OT_pick_texture,
     THEATERRIG_OT_make_color_slot,
+    THEATERRIG_OT_pick_tile_texture,
+    THEATERRIG_OT_make_tiles,
+    THEATERRIG_OT_clear_tiles,
     THEATERRIG_OT_export,
     THEATERRIG_PT_panel,
 )
