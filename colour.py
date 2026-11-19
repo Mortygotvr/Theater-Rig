@@ -72,6 +72,18 @@ def _greyscale(img):
     return out.ravel(), np.clip(tint, 0.0, 1.0)
 
 
+def _mtoon(mat):
+    """The VRM add-on's MToon data of `mat`, when it's on."""
+    ext = getattr(mat, "vrm_addon_extension", None)
+    mt = getattr(ext, "mtoon1", None) if ext else None
+    return mt if mt is not None and getattr(mt, "enabled", False) else None
+
+
+def _source(texture_info):
+    idx = getattr(texture_info, "index", None)
+    return getattr(idx, "source", None) if idx else None
+
+
 def make_color_slot(image, slot):
     """Greyscale `image` into colour slot `slot`. Returns (grey image, [materials])."""
     users = [m for m in bpy.data.materials if base_image(m) == image]
@@ -88,6 +100,20 @@ def make_color_slot(image, slot):
         # The colour it showed (its factor on top of the texture's) is kept as a
         # property only; the material itself goes plain grey
         factor = np.array(mix.inputs["B"].default_value[:3]) if mix else np.ones(3)
+        # A MToon material (not detoonified yet): its VRM data names the
+        # texture and the factor too, and Detoonify / a VRM export rebuild from
+        # them. They take the grey copy and white, or the old texture comes back
+        mt = _mtoon(mat)
+        if mt is not None:
+            pbr = mt.pbr_metallic_roughness
+            if _source(pbr.base_color_texture) == image:
+                pbr.base_color_texture.index.source = grey
+                if mix is None:
+                    factor = np.array(pbr.base_color_factor[:3])
+                pbr.base_color_factor = (1.0, 1.0, 1.0, pbr.base_color_factor[3])
+            shade = getattr(mt.extensions.vrmc_materials_mtoon, "shade_multiply_texture", None)
+            if shade is not None and _source(shade) == image:
+                shade.index.source = grey
         mat[DEFAULT_PROP] = [float(c) for c in np.clip(factor * tint, 0.0, 1.0)]
         tex.image = grey
         if mix is not None:
