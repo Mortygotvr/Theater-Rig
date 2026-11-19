@@ -1,14 +1,21 @@
-"""Tile textures: VRM expressions that move a material's texture (a grid of
-eyes, mouths, faces in one image) to show another tile. VRM keeps them in its
-expressions (VRM 0.x: material values on _MainTex_ST; VRM 1.0: texture
-transform binds), which Export removes with the rest of the VRM data, so
-Export first copies them onto the armature as `theater_tiles` (glTF extras),
-for the renderer:
+"""Tile textures: a texture that's a grid of pictures (eyes, mouths, faces in
+one image), and named tiles that each show one of them. One standard for
+every avatar, kept on the armature as `theater_tiles` (glTF extras):
 
-    {"<expression>": [{"material": "<name>", "scale": [sx, sy], "offset": [ox, oy]}, ...], ...}
+    {"<tile>": {"set": "<set>", "order": n,
+                "binds": [{"material": "<name>", "scale": [sx, sy], "offset": [ox, oy]}, ...]}, ...}
 
 in glTF's texture coordinates (KHR_texture_transform's: v down, offset from
-the top left): uv' = uv * scale + offset."""
+the top left): uv' = uv * scale + offset. A set is tiles that go together
+("next" and "random" go through a set, in its order).
+
+Two ways to get them:
+- Make Tiles: splits a texture into a grid of named tiles (a set);
+- Convert VRM Tiles: the VRM expressions that move a texture (VRM 0.x:
+  material values on _MainTex_ST; VRM 1.0: texture transform binds), as the
+  set "expressions". Export does it too when it hasn't been done, before it
+  removes the VRM data.
+The old form (a tile's binds alone, no set) is read as the set "expressions"."""
 
 import json
 import math
@@ -25,8 +32,12 @@ def _from_unity_st(st):
     return [sx, sy], [ox, 1.0 - sy - oy]
 
 
+VRM_SET = "expressions"
+
+
 def collect(arm):
-    """Every expression's tile binds, from the VRM data on the armature."""
+    """Every expression's tile binds, from the VRM data on the armature
+    ({expression: binds}, in the VRM's order)."""
     ext = getattr(arm.data, "vrm_addon_extension", None)
     if ext is None:
         return {}
@@ -54,22 +65,71 @@ def collect(arm):
     return out
 
 
+def entry(set_name, order, binds):
+    return {"set": set_name, "order": order, "binds": binds}
+
+
+def normalised(data):
+    """`theater_tiles` in the standard form (the old form: binds alone)."""
+    out = {}
+    for i, (name, v) in enumerate(sorted(data.items()) if isinstance(data, dict) else []):
+        if isinstance(v, list):
+            out[name] = entry(VRM_SET, i, v)
+        elif isinstance(v, dict) and isinstance(v.get("binds"), list):
+            out[name] = entry(str(v.get("set", "")), int(v.get("order", i)), v["binds"])
+    return out
+
+
 def stored(arm):
-    """The tiles on the armature now."""
+    """The tiles on the armature now (standard form)."""
     try:
-        return json.loads(arm.get(PROP, "{}"))
+        return normalised(json.loads(arm.get(PROP, "{}")))
     except (TypeError, ValueError):
         return {}
 
 
+def save(arm, tiles):
+    arm[PROP] = json.dumps(tiles)
+
+
+def sets(arm):
+    """{set: [tile names, in order]}."""
+    out = {}
+    for name, t in sorted(stored(arm).items(), key=lambda kv: (kv[1]["set"], kv[1]["order"], kv[0])):
+        out.setdefault(t["set"], []).append(name)
+    return out
+
+
+def convert(arm):
+    """The VRM's tile expressions as the set "expressions" (it replaces that
+    set; the other sets stay). Returns how many."""
+    found = collect(arm)
+    if not found:
+        return 0
+    tiles = {n: t for n, t in stored(arm).items() if t["set"] != VRM_SET and n not in found}
+    for i, (name, binds) in enumerate(found.items()):
+        tiles[name] = entry(VRM_SET, i, binds)
+    save(arm, tiles)
+    return len(found)
+
+
+def remove_set(arm, set_name):
+    """Removes a set's tiles; returns how many."""
+    before = stored(arm)
+    kept = {n: t for n, t in before.items() if t["set"] != set_name}
+    save(arm, kept)
+    return len(before) - len(kept)
+
+
 def store(arm):
-    """Copies the VRM's tiles onto the armature (kept by Export), with the ones
-    there already (made with Make Tiles; a VRM expression of the same name
-    wins). Returns how many tiles it has."""
+    """Before Export: the VRM's tiles converted (when they haven't been yet),
+    the tiles saved in the standard form. Returns how many tiles it has."""
     tiles = stored(arm)
-    tiles.update(collect(arm))
+    if not any(t["set"] == VRM_SET for t in tiles.values()) and collect(arm):
+        convert(arm)
+        tiles = stored(arm)
     if tiles:
-        arm[PROP] = json.dumps(tiles)
+        save(arm, tiles)
     return len(tiles)
 
 
@@ -182,18 +242,24 @@ def tile_names(text, image, count):
     return [given[i] if i < len(given) and given[i] else f"{stem}_{i}" for i in range(count)]
 
 
-def make(arm, image, columns, rows, names, default_cell=0):
+def set_name_of(image, set_name=""):
+    """The set Make Tiles fills: the one given, else the texture's name."""
+    return set_name.strip() or os.path.splitext(image.name)[0]
+
+
+def make(arm, image, columns, rows, names, default_cell=0, set_name=""):
     """Splits `image` into `columns` x `rows` tiles named `names` (comma
-    separated, across then down), on every material using it, stored on
-    `arm`. Tiles made before on those materials go. Returns (how many tiles,
-    each material's kind: "cell" or "sheet")."""
+    separated, across then down), on every material using it: the set
+    `set_name` (else the texture's name), replacing it, stored on `arm`.
+    Returns (how many tiles, each material's kind: "cell" or "sheet")."""
     columns, rows = max(1, int(columns)), max(1, int(rows))
     count = columns * rows
     materials = materials_using(image)
     if not materials:
         raise ValueError(f"No material uses {image.name} as its base colour")
     labels = tile_names(names, image, count)
-    tiles = {n: b for n, b in stored(arm).items() if not all(x["material"] in {m.name for m in materials} for x in b)}
+    group = set_name_of(image, set_name)
+    tiles = {n: t for n, t in stored(arm).items() if t["set"] != group and n not in labels}
     kinds = {}
     binds = [[] for _ in range(count)]
     for mat in materials:
@@ -213,7 +279,7 @@ def make(arm, image, columns, rows, names, default_cell=0):
             d = default_cell % count
             set_base_transform(mat, [1.0 / columns, 1.0 / rows, (d % columns) / columns, (d // columns) / rows])
         kinds[mat.name] = "cell" if here is not None else "sheet"
-    for name, b in zip(labels, binds):
-        tiles[name] = b
-    arm[PROP] = json.dumps(tiles)
+    for i, (name, b) in enumerate(zip(labels, binds)):
+        tiles[name] = entry(group, i, b)
+    save(arm, tiles)
     return count, kinds

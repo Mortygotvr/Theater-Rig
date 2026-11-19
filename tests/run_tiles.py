@@ -51,12 +51,14 @@ if not carried:
 else:
     data = json.loads(carried[0]["extras"]["theater_tiles"])
     print(f"in the GLB, on node {carried[0].get('name')!r}: {len(data)} expression(s)")
+    if any(t.get("set") != "expressions" for t in data.values()):
+        problems.append("not all in the set 'expressions'")
     for name in sorted(data)[:3]:
         print(f"  {name}: {data[name]}")
     if set(data) != set(found):
         problems.append("the GLB's tiles differ from the VRM's")
     names = {m["name"] for m in gltf["materials"]}
-    missing = {b["material"] for binds in data.values() for b in binds} - names
+    missing = {b["material"] for t in data.values() for b in t["binds"]} - names
     if missing:
         problems.append(f"tile materials not in the GLB: {missing}")
 

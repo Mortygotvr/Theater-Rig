@@ -68,17 +68,17 @@ one = plane("OneCell", (0.55, 0.55, 0.95, 0.95), 1)
 
 problems = []
 bpy.context.view_layer.objects.active = arm
-count, kinds = tiles.make(arm, sheet, 2, 2, "Open, Closed, , Star", default_cell=1)
+count, kinds = tiles.make(arm, sheet, 2, 2, "Open, Closed, , Star", default_cell=1, set_name="eyes")
 print("made:", count, kinds)
 if kinds != {"Whole": "sheet", "OneCell": "cell"}:
     problems.append(f"kinds: {kinds}")
 made = tiles.stored(arm)
-if sorted(made) != sorted(["Open", "Closed", "Eyes_2", "Star"]):
-    problems.append(f"names: {sorted(made)}")
+if tiles.sets(arm) != {"eyes": ["Open", "Closed", "Eyes_2", "Star"]}:
+    problems.append(f"sets: {tiles.sets(arm)}")
 
 
 def bind(name, mat):
-    return next(b for b in made[name] if b["material"] == mat)
+    return next(b for b in made[name]["binds"] if b["material"] == mat)
 
 
 def near(a, b):
@@ -99,10 +99,19 @@ if not near(b["offset"], [0.0, 0.5]):
 if tiles.base_transform(whole) != [0.5, 0.5, 0.5, 0.0] and not near(tiles.base_transform(whole), [0.5, 0.5, 0.5, 0.0]):
     problems.append(f"Whole default: {tiles.base_transform(whole)}")
 
-# Made again with other names: the old ones go
-tiles.make(arm, sheet, 2, 2, "A, B, C, D", default_cell=1)
-if sorted(tiles.stored(arm)) != ["A", "B", "C", "D"]:
-    problems.append(f"remade: {sorted(tiles.stored(arm))}")
+# Made again with other names: the set's old ones go; another set stays
+tiles.make(arm, sheet, 2, 2, "A, B, C, D", default_cell=1, set_name="eyes")
+tiles.make(arm, sheet, 1, 2, "Up, Down")
+if tiles.sets(arm) != {"eyes": ["A", "B", "C", "D"], "Eyes": ["Up", "Down"]}:
+    problems.append(f"remade: {tiles.sets(arm)}")
+if tiles.remove_set(arm, "Eyes") != 2:
+    problems.append("remove_set")
+# (Up / Down moved the whole sheet's default cell: the 2 x 2 again)
+tiles.make(arm, sheet, 2, 2, "A, B, C, D", default_cell=1, set_name="eyes")
+# The old form (binds alone) reads as the set "expressions"
+old = tiles.normalised({"Wink": [{"material": "Whole", "scale": [1, 1], "offset": [0, 0]}]})
+if old != {"Wink": {"set": "expressions", "order": 0, "binds": [{"material": "Whole", "scale": [1, 1], "offset": [0, 0]}]}}:
+    problems.append(f"old form: {old}")
 # Export keeps them (store merges, doesn't wipe)
 result = export.export_glb(bpy.context, out)
 print("export:", result[1:])
@@ -117,8 +126,8 @@ if not carried:
     problems.append("no node carries theater_tiles")
 else:
     data = json.loads(carried[0]["extras"]["theater_tiles"])
-    print("in the GLB:", sorted(data))
-    if sorted(data) != ["A", "B", "C", "D"]:
+    print("in the GLB:", data["A"])
+    if sorted(data) != ["A", "B", "C", "D"] or data["D"]["set"] != "eyes" or data["D"]["order"] != 3:
         problems.append(f"GLB tiles: {sorted(data)}")
 mats = {m["name"]: m for m in gltf["materials"]}
 tt = mats["Whole"]["pbrMetallicRoughness"]["baseColorTexture"].get("extensions", {}).get("KHR_texture_transform")
