@@ -21,6 +21,7 @@ from . import strip
 from . import tiles
 from . import tpose
 from . import spring_preview
+from . import cloth_bones
 
 if _reloading:
     import importlib
@@ -31,7 +32,7 @@ if _reloading:
         spring_preview.stop()
     except Exception:
         pass
-    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, strip, tiles, export, spring_preview):
+    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, strip, tiles, export, spring_preview, cloth_bones):
         importlib.reload(_module)
 
 REPORT_TEXT = "Theater Rig report"
@@ -337,6 +338,53 @@ class THEATERRIG_OT_spring_preview(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_make_cloth_bones(bpy.types.Operator):
+    """Spring chains and their weights for the selected part of the active mesh (its faces in
+    Edit Mode), or for the faces of the material picked: a skirt becomes a ring of chains, a
+    cape a row of them. Making the same name again replaces it. Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.make_cloth_bones"
+    bl_label = "Make Cloth Bones"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        st = context.scene.theater_rig
+        arm = an.find_armature(context)
+        obj = context.active_object
+        if st.cloth_material and (obj is None or obj.type != "MESH" or st.cloth_material.name not in [s.material.name for s in obj.material_slots if s.material]):
+            # The mesh that has the material
+            obj = next((o for o in bpy.data.objects if o.type == "MESH" and any(s.material == st.cloth_material for s in o.material_slots)), obj)
+        if arm is None or obj is None or obj.type != "MESH":
+            self.report({"ERROR"}, "Select the cloth's mesh (and its faces in Edit Mode), or pick its material")
+            return {"CANCELLED"}
+        try:
+            name, shape, chains = cloth_bones.make(arm, obj, st.cloth_columns, st.cloth_rows, st.cloth_kind, st.cloth_parent,
+                                                    st.cloth_material.name if st.cloth_material else None, st.cloth_name)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        st.cloth_name = name
+        self.report({"INFO"}, f"Cloth '{name}': a {shape} of {len(chains)} chain(s) of {st.cloth_rows} bone(s). Try it with Spring Preview")
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_remove_cloth(bpy.types.Operator):
+    """Removes this cloth's bones and weights (the mesh keeps its other weights). Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.remove_cloth"
+    bl_label = "Remove Cloth"
+    bl_options = {"REGISTER", "UNDO"}
+
+    cloth: bpy.props.StringProperty()
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        if arm is None or not cloth_bones.remove(arm, self.cloth):
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Removed cloth '{self.cloth}'")
+        return {"FINISHED"}
+
+
 class TheaterRigState(bpy.types.PropertyGroup):
     analysed: bpy.props.BoolProperty()
     armature: bpy.props.StringProperty()
@@ -358,6 +406,12 @@ class TheaterRigState(bpy.types.PropertyGroup):
     tile_rows: bpy.props.IntProperty(name="Rows", min=1, max=64, default=2)
     tile_names: bpy.props.StringProperty(name="Names", description="The tiles' names, comma-separated, across then down (a blank one: <texture>_<cell>)")
     tile_set: bpy.props.StringProperty(name="Set", description="The set these tiles make (\"next\" and \"random\" go through a set); empty: the texture's name")
+    cloth_columns: bpy.props.IntProperty(name="Chains", default=8, min=2, max=64, description="How many chains: around a skirt, across a cape")
+    cloth_rows: bpy.props.IntProperty(name="Bones each", default=4, min=1, max=16, description="Bones down each chain")
+    cloth_kind: bpy.props.EnumProperty(name="Kind", items=[(k, k.capitalize(), "") for k in cloth_bones.KINDS], default="skirt")
+    cloth_parent: bpy.props.StringProperty(name="Hangs from", description="The body bone it hangs from (empty: the nearest to its top)")
+    cloth_material: bpy.props.PointerProperty(type=bpy.types.Material, name="Material", description="Its faces are the part (empty: the faces selected in Edit Mode)")
+    cloth_name: bpy.props.StringProperty(name="Name", description="Its name (making the same name again replaces it; empty: a new one)")
     spring_sway: bpy.props.BoolProperty(name="Sway the body", description="Turns the hips back and forth while the preview runs (a test without touching anything)")
     spring_show_colliders: bpy.props.BoolProperty(name="Show colliders", default=True, description="Draws the capsules Theater Puppet pushes the springs out of")
     spring_colliders_thick: bpy.props.FloatProperty(name="Colliders thickness", default=1.0, min=0.0, max=3.0, description="As the Puppet source's colliders setting: a multiplier")
@@ -418,6 +472,22 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
             row.label(text=f"{group or '(no set)'}: {shown}", icon="TEXTURE")
             row.operator(THEATERRIG_OT_remove_tile_set.bl_idname, text="", icon="X").set_name = group
         box = lay.box()
+        box.label(text="Cloth bones (a skirt, a cape, long hair)", icon="MOD_CLOTH")
+        box.label(text="Select its faces in Edit Mode, or pick its material:")
+        box.prop_search(st, "cloth_material", bpy.data, "materials", text="")
+        row = box.row(align=True)
+        row.prop(st, "cloth_columns")
+        row.prop(st, "cloth_rows")
+        box.prop(st, "cloth_kind")
+        if arm:
+            box.prop_search(st, "cloth_parent", arm.data, "bones", text="Hangs from")
+        box.prop(st, "cloth_name")
+        box.operator(THEATERRIG_OT_make_cloth_bones.bl_idname, icon="MOD_CLOTH")
+        for cname, cloth in (cloth_bones.cloths(arm) if arm else {}).items():
+            row = box.row()
+            row.label(text=f"{cname}: {cloth['shape']}, {len(cloth['chains'])} × {cloth['rows']} on {cloth['mesh']}")
+            row.operator(THEATERRIG_OT_remove_cloth.bl_idname, text="", icon="X").cloth = cname
+        box = lay.box()
         box.label(text="Spring preview (as Theater Puppet swings them)", icon="FORCE_WIND")
         on = spring_preview.running()
         box.operator(THEATERRIG_OT_spring_preview.bl_idname, text="Stop Spring Preview" if on else "Start Spring Preview", icon="PAUSE" if on else "PLAY", depress=on)
@@ -459,6 +529,8 @@ CLASSES = (
     THEATERRIG_OT_convert_tiles,
     THEATERRIG_OT_remove_tile_set,
     THEATERRIG_OT_spring_preview,
+    THEATERRIG_OT_make_cloth_bones,
+    THEATERRIG_OT_remove_cloth,
     THEATERRIG_OT_export,
     THEATERRIG_PT_panel,
 )
