@@ -254,6 +254,37 @@ class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_export_prop(bpy.types.Operator, ExportHelper):
+    """Exports the selected meshes alone, without the armature (no skin): each where it is
+    next to the avatar, in its rest shape, its shape keys kept. For a prop or a part Theater
+    Puppet draws with the avatar (Also draw): it lines up. Nothing is removed from the scene"""
+
+    bl_idname = "theater_rig.export_prop"
+    bl_label = "Export Prop GLB"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".glb"
+    filter_glob: bpy.props.StringProperty(default="*.glb", options={"HIDDEN"})
+
+    def invoke(self, context, event):
+        if not any(o.type == "MESH" for o in context.selected_objects):
+            self.report({"ERROR"}, "Select the prop's mesh(es) first")
+            return {"CANCELLED"}
+        obj = context.active_object if context.active_object and context.active_object.type == "MESH" else next(o for o in context.selected_objects if o.type == "MESH")
+        folder = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.path.expanduser("~")
+        self.filepath = os.path.join(folder, obj.name + ".glb")
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        meshes = export.export_prop(context, self.filepath)
+        if not meshes:
+            self.report({"ERROR"}, "Select the prop's mesh(es) first")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Exported {os.path.basename(self.filepath)}: {', '.join(o.name for o in meshes)} (no armature)")
+        return {"FINISHED"}
+
+
 class THEATERRIG_OT_rename_mixamo(bpy.types.Operator):
     """Renames body bones to Mixamo names (vertex groups and VRM data follow). Undo with Ctrl+Z"""
 
@@ -512,6 +543,8 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         lay.separator()
         lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
+        lay.label(text="A prop or part, lined up with it (selected meshes, no armature):")
+        lay.operator(THEATERRIG_OT_export_prop.bl_idname, icon="EXPORT")
 
 
 CLASSES = (
@@ -532,6 +565,7 @@ CLASSES = (
     THEATERRIG_OT_make_cloth_bones,
     THEATERRIG_OT_remove_cloth,
     THEATERRIG_OT_export,
+    THEATERRIG_OT_export_prop,
     THEATERRIG_PT_panel,
 )
 

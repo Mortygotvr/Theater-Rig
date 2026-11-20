@@ -73,3 +73,46 @@ def export_glb(context, filepath):
             o.select_set(o in was_selected)
         view_layer.objects.active = was_active
     return arm, found, colliders, tiled
+
+
+def export_prop(context, filepath):
+    """The selected meshes alone, without the armature (no skin): each where it
+    is next to the avatar, its rest shape (armature modifiers off for the
+    export), its shape keys and custom properties kept. A prop or a part that
+    Theater Puppet draws as an Also draw GLB lines up with the avatar.
+    Returns the meshes exported (none: nothing selected)."""
+    if context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    view_layer = context.view_layer
+    meshes = [o for o in view_layer.objects if o.select_get() and o.type == "MESH"]
+    if not meshes:
+        return []
+    was_selected = [o for o in view_layer.objects if o.select_get()]
+    was_active = view_layer.objects.active
+    # Their rest shape: the armature's pose doesn't bend them on the way out
+    switched = [(m, m.show_viewport, m.show_render) for o in meshes for m in o.modifiers if m.type == "ARMATURE"]
+    for m, _, _ in switched:
+        m.show_viewport = False
+        m.show_render = False
+    for o in view_layer.objects:
+        o.select_set(o in meshes)
+    try:
+        bpy.ops.export_scene.gltf(
+            filepath=filepath,
+            export_format="GLB",
+            use_selection=True,
+            export_extras=True,
+            export_apply=False,
+            export_skins=False,
+            export_morph=True,
+            export_animations=False,
+            export_yup=True,
+        )
+    finally:
+        for m, viewport, render in switched:
+            m.show_viewport = viewport
+            m.show_render = render
+        for o in view_layer.objects:
+            o.select_set(o in was_selected)
+        view_layer.objects.active = was_active
+    return meshes
