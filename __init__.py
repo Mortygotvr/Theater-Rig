@@ -22,6 +22,10 @@ from . import tiles
 from . import tpose
 from . import spring_preview
 from . import cloth_bones
+from . import contacts
+
+# The glTF exporter calls enabled add-ons' hooks: contact frames (contacts.py)
+glTF2ExportUserExtension = contacts.glTF2ExportUserExtension
 
 if _reloading:
     import importlib
