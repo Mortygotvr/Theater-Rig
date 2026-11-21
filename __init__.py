@@ -197,6 +197,80 @@ class THEATERRIG_OT_remove_tile_set(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _tile_items(self, context):
+    arm = an.find_armature(context)
+    items = []
+    for group, names in (tiles.sets(arm) if arm else {}).items():
+        for n in names:
+            items.append((n, n, f"Set {group or '(no set)'}"))
+    return items or [("", "(no tiles)", "")]
+
+
+class THEATERRIG_OT_test_tile(bpy.types.Operator):
+    """Shows a tile in Blender, as Theater Puppet shows it (Material Preview or Rendered view).
+Back to Normal (and Export) puts the materials back"""
+
+    bl_idname = "theater_rig.test_tile"
+    bl_label = "Test Tile"
+    bl_options = {"REGISTER", "UNDO"}
+    bl_property = "tile"
+
+    tile: bpy.props.EnumProperty(name="Tile", items=_tile_items)
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_search_popup(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        if arm is None or not self.tile:
+            return {"CANCELLED"}
+        try:
+            n = tiles.test(arm, self.tile)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Showing tile '{self.tile}' on {n} material(s)")
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_step_tile(bpy.types.Operator):
+    """Shows the set's next (or previous) tile in Blender, as Theater Puppet's "next" goes through it"""
+
+    bl_idname = "theater_rig.step_tile"
+    bl_label = "Next Tile"
+    bl_options = {"REGISTER", "UNDO"}
+
+    set_name: bpy.props.StringProperty()
+    by: bpy.props.IntProperty(default=1)
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        if arm is None:
+            return {"CANCELLED"}
+        try:
+            name = tiles.step(arm, self.set_name, self.by)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Showing tile '{name}'")
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_restore_tiles(bpy.types.Operator):
+    """Puts the materials back as they were before Test Tile (Export does it too)"""
+
+    bl_idname = "theater_rig.restore_tiles"
+    bl_label = "Back to Normal"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        n = tiles.restore(arm)
+        self.report({"INFO"}, f"{n} material(s) back to normal")
+        return {"FINISHED"}
+
+
 class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
     """Makes a greyscale copy of the texture named Color<N>; the materials using it turn
     grey, get Color<N> in their name, and keep their old colour as 'color_default'. Undo with Ctrl+Z"""
@@ -497,11 +571,23 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         box.operator(THEATERRIG_OT_make_tiles.bl_idname, icon="MESH_GRID")
         box.operator(THEATERRIG_OT_convert_tiles.bl_idname, icon="SHAPEKEY_DATA")
         arm = an.find_armature(context)
+        now = tiles.tested(arm)
         for group, names in (tiles.sets(arm) if arm else {}).items():
             row = box.row()
             shown = ", ".join(names[:5]) + (" ..." if len(names) > 5 else "")
             row.label(text=f"{group or '(no set)'}: {shown}", icon="TEXTURE")
+            sub = row.row(align=True)
+            op = sub.operator(THEATERRIG_OT_step_tile.bl_idname, text="", icon="TRIA_LEFT")
+            op.set_name, op.by = group, -1
+            op = sub.operator(THEATERRIG_OT_step_tile.bl_idname, text="", icon="TRIA_RIGHT")
+            op.set_name, op.by = group, 1
             row.operator(THEATERRIG_OT_remove_tile_set.bl_idname, text="", icon="X").set_name = group
+        if arm and tiles.sets(arm):
+            row = box.row(align=True)
+            row.operator(THEATERRIG_OT_test_tile.bl_idname, icon="HIDE_OFF")
+            if now:
+                row.operator(THEATERRIG_OT_restore_tiles.bl_idname, icon="LOOP_BACK")
+                box.label(text=f"Testing: {now} (Material Preview shows it)", icon="INFO")
         box = lay.box()
         box.label(text="Cloth bones (a skirt, a cape, long hair)", icon="MOD_CLOTH")
         box.label(text="Select its faces in Edit Mode, or pick its material:")
@@ -561,6 +647,9 @@ CLASSES = (
     THEATERRIG_OT_make_tiles,
     THEATERRIG_OT_convert_tiles,
     THEATERRIG_OT_remove_tile_set,
+    THEATERRIG_OT_test_tile,
+    THEATERRIG_OT_step_tile,
+    THEATERRIG_OT_restore_tiles,
     THEATERRIG_OT_spring_preview,
     THEATERRIG_OT_make_cloth_bones,
     THEATERRIG_OT_remove_cloth,

@@ -9,6 +9,10 @@ in glTF's texture coordinates (KHR_texture_transform's: v down, offset from
 the top left): uv' = uv * scale + offset. A set is tiles that go together
 ("next" and "random" go through a set, in its order).
 
+Test Tile shows a tile in Blender as Theater Puppet shows it (its binds on
+the materials' texture placement); Back to Normal (and Export) puts the
+materials back as they were.
+
 Two ways to get them:
 - Make Tiles: splits a texture into a grid of named tiles (a set);
 - Convert VRM Tiles: the VRM expressions that move a texture (VRM 0.x:
@@ -171,9 +175,9 @@ def base_transform(mat):
     return [scale[0], scale[1], loc[0], 1.0 - loc[1] - scale[1]]
 
 
-def set_base_transform(mat, st):
+def set_base_transform(mat, st, label=""):
     """Gives the material's base colour texture placement `st` (glTF's terms)
-    through a Mapping node (made if it has none)."""
+    through a Mapping node (made if it has none, labelled `label`)."""
     from . import colour
     tex, _ = colour._base_link(mat)
     if tex is None:
@@ -182,9 +186,11 @@ def set_base_transform(mat, st):
     if node is None:
         nodes, links = mat.node_tree.nodes, mat.node_tree.links
         node = nodes.new("ShaderNodeMapping")
+        node.label = label
         node.vector_type = "POINT"
         node.location = (tex.location.x - 220, tex.location.y)
         uv = nodes.new("ShaderNodeUVMap")
+        uv.label = label
         uv.location = (node.location.x - 200, node.location.y)
         links.new(uv.outputs["UV"], node.inputs["Vector"])
         links.new(node.outputs["Vector"], tex.inputs["Vector"])
@@ -283,3 +289,90 @@ def make(arm, image, columns, rows, names, default_cell=0, set_name=""):
         tiles[name] = entry(group, i, b)
     save(arm, tiles)
     return count, kinds
+
+
+# ---------------------------------------------------------------------------
+# Test Tile: a tile shown in Blender, as Theater Puppet shows it (its binds
+# as the materials' texture placement), until Back to Normal. What each
+# material had before is kept on the armature (`theater_tile_test`), so it
+# comes back exactly: a material that had no Mapping node loses the one the
+# test made (it would export the tile otherwise).
+
+TEST = "theater_tile_test"
+TEST_LABEL = "Theater tile test"
+
+
+def _test_state(arm):
+    try:
+        state = json.loads(arm.get(TEST, "{}"))
+    except (TypeError, ValueError):
+        state = {}
+    return state if isinstance(state, dict) else {}
+
+
+def tested(arm):
+    """The tile being tested ("" when none)."""
+    return str(_test_state(arm).get("tile", "")) if arm is not None else ""
+
+
+def test(arm, name):
+    """Shows tile `name` on its materials. Returns how many materials."""
+    tile = stored(arm).get(name)
+    if tile is None:
+        raise ValueError(f"No tile named {name}")
+    state = _test_state(arm)
+    before = state.get("before", {})
+    shown = 0
+    for b in tile["binds"]:
+        mat = bpy.data.materials.get(b.get("material", ""))
+        if mat is None:
+            continue
+        if mat.name not in before:
+            before[mat.name] = base_transform(mat) if _mapping(mat) is not None else None
+        scale, offset = b.get("scale", [1.0, 1.0]), b.get("offset", [0.0, 0.0])
+        if set_base_transform(mat, [scale[0], scale[1], offset[0], offset[1]], TEST_LABEL):
+            shown += 1
+    arm[TEST] = json.dumps({"tile": name, "before": before})
+    return shown
+
+
+def step(arm, set_name, by):
+    """Tests the tile `by` places on from the one tested in `set_name` (the
+    set's first when none of its tiles is). Returns its name."""
+    names = sets(arm).get(set_name, [])
+    if not names:
+        raise ValueError(f"No set named {set_name}")
+    now = tested(arm)
+    i = (names.index(now) + by) % len(names) if now in names else (0 if by >= 0 else len(names) - 1)
+    test(arm, names[i])
+    return names[i]
+
+
+def restore(arm):
+    """Back to Normal: every material the test changed as it was. Returns how many."""
+    if arm is None or TEST not in arm:
+        return 0
+    from . import colour
+    before = _test_state(arm).get("before", {})
+    for mat_name, st in before.items():
+        mat = bpy.data.materials.get(mat_name)
+        if mat is None:
+            continue
+        if st is not None:
+            set_base_transform(mat, st)
+            continue
+        # It had no Mapping node: the test's go (the texture reads the UVs again)
+        node = _mapping(mat)
+        if node is not None and node.label == TEST_LABEL:
+            nodes = mat.node_tree.nodes
+            if node.inputs["Vector"].links:
+                uv = node.inputs["Vector"].links[0].from_node
+                if uv.type == "UVMAP" and uv.label == TEST_LABEL:
+                    nodes.remove(uv)
+            nodes.remove(node)
+        tex, _ = colour._base_link(mat)
+        if tex is not None:
+            for link in list(tex.inputs["Vector"].links):
+                mat.node_tree.links.remove(link)
+    del arm[TEST]
+    return len(before)

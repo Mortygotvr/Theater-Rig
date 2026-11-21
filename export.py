@@ -44,6 +44,8 @@ def export_glb(context, filepath):
     found = warnings(arm)
     if context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
+    # A tile being tested: back to normal first (or it would be exported)
+    tiles.restore(arm)
     tiled = tiles.store(arm)
     colliders = strip.remove_colliders(arm)
     strip.remove_vrm_data()
