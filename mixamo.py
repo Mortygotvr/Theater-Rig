@@ -193,3 +193,83 @@ def import_fbx(context, path, arm=None, name=None):
         context.view_layer.objects.active = active
         if mode != "OBJECT" and context.view_layer.objects.active == arm:
             bpy.ops.object.mode_set(mode=mode)
+
+
+def _name_animation(glb, name):
+    """Names the GLB's animation(s) `name` (the exporter calls an active
+    action's "Animation"): its JSON chunk rewritten, padded to 4 bytes."""
+    import json
+    import struct
+    with open(glb, "rb") as f:
+        data = f.read()
+    n = struct.unpack("<I", data[12:16])[0]
+    gltf = json.loads(data[20:20 + n])
+    for a in gltf.get("animations", []):
+        a["name"] = name
+    js = json.dumps(gltf, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    js += b" " * (-len(js) % 4)
+    rest = data[20 + n:]
+    body = struct.pack("<I", len(js)) + b"JSON" + js + rest
+    with open(glb, "wb") as f:
+        f.write(data[:8] + struct.pack("<I", 12 + len(body)) + body)
+
+
+def convert_fbx(context, path, out=None):
+    """A Mixamo FBX as an animation GLB Theater Puppet puts on any avatar:
+    Mixamo's skeleton alone (its T-pose, its bones named without
+    "mixamorig:") and its motion, as one clip named after the file. Nothing
+    is left in the scene. Returns (the GLB's path, frames)."""
+    name = os.path.splitext(os.path.basename(path))[0]
+    out = out or os.path.join(os.path.dirname(path), name + ".glb")
+    view = context.view_layer
+    active = view.objects.active
+    selected = [o for o in view.objects if o.select_get()]
+    if context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    before = {k: set(getattr(bpy.data, k)) for k in ("objects", "armatures", "meshes", "materials", "actions", "images", "textures")}
+    bpy.ops.import_scene.fbx(filepath=path)
+    added = {k: set(getattr(bpy.data, k)) - v for k, v in before.items()}
+    try:
+        src = next((o for o in added["objects"] if o.type == "ARMATURE"), None)
+        if src is None or not (src.animation_data and src.animation_data.action):
+            raise RuntimeError(f"{os.path.basename(path)}: no animated armature in it")
+        act = src.animation_data.action
+        f0, f1 = (int(round(x)) for x in act.frame_range)
+        for b in src.data.bones:
+            b.name = plain(b.name)
+        if not {"Hips", "Spine", "LeftArm", "RightUpLeg"} <= {b.name for b in src.data.bones}:
+            raise RuntimeError(f"{os.path.basename(path)}: not a Mixamo skeleton (no Hips, Spine, LeftArm…)")
+        act.name = name
+        for o in view.objects:
+            o.select_set(o == src)
+        view.objects.active = src
+        bpy.ops.export_scene.gltf(
+            filepath=out,
+            export_format="GLB",
+            use_selection=True,
+            export_extras=True,
+            export_skins=False,
+            export_morph=False,
+            export_animations=True,
+            # Its own action only (another armature's with the same bone names,
+            # an avatar's, would go in too); named after the file below
+            export_animation_mode="ACTIVE_ACTIONS",
+            export_yup=True,
+        )
+        _name_animation(out, name)
+        return out, f1 - f0 + 1
+    finally:
+        for o in added["objects"]:
+            bpy.data.objects.remove(o, do_unlink=True)
+        for d in added["actions"]:
+            if d.name in bpy.data.actions and bpy.data.actions[d.name] == d:
+                bpy.data.actions.remove(d)
+        for k in ("armatures", "meshes", "materials", "textures", "images"):
+            coll = getattr(bpy.data, k)
+            for d in added[k]:
+                if d.name in coll and coll[d.name] == d and d.users == 0:
+                    coll.remove(d)
+        # (Objects just removed can still show there as None)
+        for o in [o for o in view.objects if o is not None]:
+            o.select_set(o in selected)
+        view.objects.active = active

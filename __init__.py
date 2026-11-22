@@ -121,6 +121,37 @@ class THEATERRIG_OT_import_mixamo(bpy.types.Operator, ImportHelper):
         return {"CANCELLED"}
 
 
+class THEATERRIG_OT_convert_mixamo(bpy.types.Operator, ImportHelper):
+    """Mixamo animations (FBX) as animation GLBs for Theater Puppet: one per file, next to
+    it, same name. Puppet puts them on any avatar (its Animation folder). No avatar
+    needed, nothing changes in the scene"""
+
+    bl_idname = "theater_rig.convert_mixamo"
+    bl_label = "Convert Mixamo to Animation GLB"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".fbx"
+    filter_glob: bpy.props.StringProperty(default="*.fbx", options={"HIDDEN"})
+    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
+    directory: bpy.props.StringProperty(subtype="DIR_PATH", options={"HIDDEN", "SKIP_SAVE"})
+
+    def execute(self, context):
+        paths = [os.path.join(self.directory, f.name) for f in self.files if f.name] or [self.filepath]
+        done, failed = [], []
+        for path in paths:
+            try:
+                out, frames = mixamo.convert_fbx(context, path)
+                done.append(os.path.basename(out))
+            except Exception as e:
+                failed.append(f"{os.path.basename(path)}: {e}")
+        if failed:
+            self.report({"WARNING"}, "Not converted: " + "; ".join(failed))
+        if done:
+            self.report({"INFO"}, f"Made {', '.join(done)} in {os.path.dirname(paths[0])}: set it as Puppet's Animation folder")
+            return {"FINISHED"}
+        return {"CANCELLED"}
+
+
 class THEATERRIG_OT_tpose(bpy.types.Operator):
     """Arms horizontal, legs straight, applied as the rest pose with shape keys kept.
     Nothing happens if the model is already in a T-pose. Undo with Ctrl+Z"""
@@ -663,6 +694,8 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
     def draw(self, context):
         lay = self.layout
         lay.operator(THEATERRIG_OT_analyse.bl_idname, icon="VIEWZOOM")
+        # Needs no avatar: Mixamo files straight to Puppet's animation GLBs
+        lay.operator(THEATERRIG_OT_convert_mixamo.bl_idname, icon="EXPORT")
         st = context.scene.theater_rig
         if not st.analysed:
             lay.label(text="Select the avatar, then Analyse.")
@@ -776,6 +809,7 @@ CLASSES = (
     THEATERRIG_OT_align_bones,
     THEATERRIG_OT_tpose,
     THEATERRIG_OT_import_mixamo,
+    THEATERRIG_OT_convert_mixamo,
     THEATERRIG_OT_pick_texture,
     THEATERRIG_OT_make_color_slot,
     THEATERRIG_OT_pick_tile_texture,
