@@ -5,6 +5,7 @@ renaming parts to its convention (see conventions.py)."""
 _reloading = "bpy" in locals()
 
 import os
+import sys
 
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
@@ -39,7 +40,17 @@ if _reloading:
         spring_preview.stop()
     except Exception:
         pass
-    for _module in (conventions, an, rename, detoon, springs, align, tpose, colour, strip, tiles, export, spring_preview, cloth_bones):
+    _order = (conventions, an, rename, detoon, springs, align, tpose, contacts, colour, overlay, strip, tiles, anim_export, mixamo, export, spring_preview, cloth_bones)
+    for _module in _order:
+        importlib.reload(_module)
+    # Every other file of it loaded (palette.py, dae.py…: imported where
+    # they're used), so none stays old (a new file forgotten in the list above
+    # left overlay.py old: Make Colour Slot failed)
+    _done = {m.__name__ for m in _order}
+    for _name in sorted(n for n in list(sys.modules) if n.startswith(__name__ + ".") and n not in _done):
+        importlib.reload(sys.modules[_name])
+    # Those that imported them take the new ones
+    for _module in (colour, overlay, mixamo, anim_export):
         importlib.reload(_module)
 
 REPORT_TEXT = "Theater Rig report"
