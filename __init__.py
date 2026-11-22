@@ -947,138 +947,162 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
     def draw(self, context):
         lay = self.layout
         lay.operator(THEATERRIG_OT_analyse.bl_idname, icon="VIEWZOOM")
-        # Animations for Puppet: no avatar needed (not through it)
-        box = lay.box()
-        box.label(text="Animations (Puppet's Animation folder)", icon="ACTION")
-        box.operator(THEATERRIG_OT_import_mixamo.bl_idname, icon="IMPORT")
-        box.operator(THEATERRIG_OT_export_animations.bl_idname, icon="EXPORT")
-        box.operator(THEATERRIG_OT_convert_mixamo.bl_idname, icon="FILE_REFRESH")
         st = context.scene.theater_rig
+        arm = an.find_armature(context)
+
+        def section(key, title, icon, closed=True):
+            """A section that folds (Blender keeps it open or closed): its body, or None when closed"""
+            header, body = lay.panel(f"theater_rig_{key}", default_closed=closed)
+            header.label(text=title, icon=icon)
+            return body
+
         if not st.analysed:
             lay.label(text="Select the avatar, then Analyse.")
-            return
-        col = lay.column(align=True)
-        col.label(text=f"{st.armature} ({st.vrm})", icon="ARMATURE_DATA")
-        warn = lambda bad: "ERROR" if bad else "CHECKMARK"
-        col.label(text=f"Bone roles: {st.roles}, missing {st.missing_roles}", icon=warn(st.missing_roles))
-        col.label(text=f"Spring chains: {st.springs}, collider groups: {st.colliders}", icon="FORCE_WIND")
-        col.label(text=f"ARKit: {st.arkit_ok} ready, {st.arkit_approx} approximate", icon="SHAPEKEY_DATA")
-        col.label(text=f"ARKit missing: {st.arkit_missing} of 52", icon=warn(st.arkit_missing))
-        col.label(text=f"MToon materials: {st.mtoon}, outlines: {st.outlines}", icon="MATERIAL")
-        col.label(text=f"Colour slots: {st.color_slots}", icon="COLOR")
-        lay.label(text=f"Details: Text editor > '{REPORT_TEXT}'")
-        lay.separator()
-        lay.operator(THEATERRIG_OT_detoonify.bl_idname, icon="SHADING_SOLID")
-        lay.operator(THEATERRIG_OT_rename_mixamo.bl_idname, icon="BONE_DATA")
-        lay.operator(THEATERRIG_OT_rename_springs.bl_idname, icon="FORCE_WIND")
-        lay.operator(THEATERRIG_OT_align_bones.bl_idname, icon="ORIENTATION_GIMBAL")
-        lay.operator(THEATERRIG_OT_tpose.bl_idname, icon="ARMATURE_DATA")
-        box = lay.box()
-        box.label(text="Colour slot", icon="COLOR")
-        box.operator(THEATERRIG_OT_pick_texture.bl_idname, icon="EYEDROPPER")
-        box.prop_search(st, "color_image", bpy.data, "images", text="")
-        if st.palette:
-            col = box.column(align=True)
-            col.label(text="Its colours (ticked: changes; unticked: kept as painted)")
-            for it in st.palette:
-                r = col.row(align=True)
-                r.prop(it, "change", text="")
-                r.prop(it, "color", text="")
-                r.label(text=f"{it.share * 100:.1f}%")
-        box.prop(st, "color_slot", text="Color")
-        row = box.row(align=True)
-        row.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
-        row.operator(THEATERRIG_OT_remove_color_slot.bl_idname, text="Remove", icon="LOOP_BACK")
-        box = lay.box()
-        box.label(text="Overlay (a logo, a tattoo, painted clothes)", icon="IMAGE_RGB_ALPHA")
-        box.operator(THEATERRIG_OT_pick_overlay_material.bl_idname, icon="EYEDROPPER")
-        box.prop_search(st, "overlay_material", bpy.data, "materials", text="")
-        box.operator(THEATERRIG_OT_add_overlay.bl_idname, icon="ADD")
-        for mat, under in [(m, u) for m, u in overlay.overlays() if colour.PART_PROP not in m]:
-            row = box.row()
-            row.label(text=f"{mat.name}", icon="IMAGE_RGB_ALPHA")
-            row.operator(THEATERRIG_OT_remove_overlay.bl_idname, text="", icon="X").material = mat.name
-        box = lay.box()
-        box.label(text="Tile textures", icon="TEXTURE")
-        box.operator(THEATERRIG_OT_pick_tile_texture.bl_idname, icon="EYEDROPPER")
-        box.prop_search(st, "tile_image", bpy.data, "images", text="")
-        row = box.row(align=True)
-        row.prop(st, "tile_columns")
-        row.prop(st, "tile_rows")
-        box.prop(st, "tile_names", text="Names")
-        box.prop(st, "tile_set", text="Set")
-        box.prop(st, "tile_default")
-        box.operator(THEATERRIG_OT_make_tiles.bl_idname, icon="MESH_GRID")
-        box.operator(THEATERRIG_OT_convert_tiles.bl_idname, icon="SHAPEKEY_DATA")
-        arm = an.find_armature(context)
-        now = tiles.tested(arm)
-        for group, names in (tiles.sets(arm) if arm else {}).items():
-            row = box.row()
-            shown = ", ".join(names[:5]) + (" ..." if len(names) > 5 else "")
-            row.label(text=f"{group or '(no set)'}: {shown}", icon="TEXTURE")
-            sub = row.row(align=True)
-            op = sub.operator(THEATERRIG_OT_step_tile.bl_idname, text="", icon="TRIA_LEFT")
-            op.set_name, op.by = group, -1
-            op = sub.operator(THEATERRIG_OT_step_tile.bl_idname, text="", icon="TRIA_RIGHT")
-            op.set_name, op.by = group, 1
-            row.operator(THEATERRIG_OT_remove_tile_set.bl_idname, text="", icon="X").set_name = group
-        if arm and tiles.sets(arm):
-            row = box.row(align=True)
-            row.operator(THEATERRIG_OT_test_tile.bl_idname, icon="HIDE_OFF")
-            if now:
-                row.operator(THEATERRIG_OT_restore_tiles.bl_idname, icon="LOOP_BACK")
-                box.label(text=f"Testing: {now} (Material Preview shows it)", icon="INFO")
-        box = lay.box()
-        box.label(text="Cloth bones (a skirt, a cape, long hair)", icon="MOD_CLOTH")
-        box.label(text="Select its faces in Edit Mode, or pick its material:")
-        box.prop_search(st, "cloth_material", bpy.data, "materials", text="")
-        row = box.row(align=True)
-        row.prop(st, "cloth_columns")
-        row.prop(st, "cloth_rows")
-        box.prop(st, "cloth_kind")
-        if arm:
-            box.prop_search(st, "cloth_parent", arm.data, "bones", text="Hangs from")
-        box.prop(st, "cloth_name")
-        box.operator(THEATERRIG_OT_make_cloth_bones.bl_idname, icon="MOD_CLOTH")
-        for cname, cloth in (cloth_bones.cloths(arm) if arm else {}).items():
-            row = box.row()
-            row.label(text=f"{cname}: {cloth['shape']}, {len(cloth['chains'])} × {cloth['rows']} on {cloth['mesh']}")
-            row.operator(THEATERRIG_OT_remove_cloth.bl_idname, text="", icon="X").cloth = cname
-        box = lay.box()
-        box.label(text="Spring preview (as Theater Puppet swings them)", icon="FORCE_WIND")
-        on = spring_preview.running()
-        box.operator(THEATERRIG_OT_spring_preview.bl_idname, text="Stop Spring Preview" if on else "Start Spring Preview", icon="PAUSE" if on else "PLAY", depress=on)
-        box.prop(st, "spring_sway")
-        row = box.row(align=True)
-        row.prop(st, "spring_show_colliders")
-        row.prop(st, "spring_colliders_thick", text="Thickness")
-        groups = spring_preview.kinds(arm) if arm else {}
-        if not groups:
-            box.label(text="No spring chains yet: Rename Springs (or Make Cloth Bones) first.")
-        elif not spring_preview.grouped(arm):
-            box.label(text="Settings by kind (one for all the hair, one for the bust…):")
-            box.operator(THEATERRIG_OT_spring_groups.bl_idname, icon="GROUP_BONE")
         else:
-            box.label(text="By kind (Export writes them on every chain of the kind):")
-            for kind, bones in groups.items():
-                sub = box.box()
-                sub.label(text=f"{kind.capitalize()}: {len(bones)} chain(s)", icon="BONE_DATA")
-                grid = sub.grid_flow(columns=2, align=True)
-                for k in spring_preview.DEFAULTS:
-                    grid.prop(arm.data, f'["{spring_preview.kind_key(kind, k)}"]', text=k.capitalize())
-        if groups:
-            box.operator(THEATERRIG_OT_delete_unused_springs.bl_idname, icon="TRASH")
-        lay.separator()
-        # The avatar's own animation: in its GLB, looped by Puppet, autoplayed elsewhere
-        av = an.find_armature(context)
-        if av is not None:
-            lay.prop_search(av.data, export.DEFAULT_PROP, bpy.data, "actions", text="Default animation", icon="ACTION")
-            lay.operator(THEATERRIG_OT_remove_animations.bl_idname, icon="TRASH")
-        lay.label(text="Last (removes colliders and VRM data):")
-        lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
-        lay.label(text="A prop or part, lined up with it (selected meshes, no armature):")
-        lay.operator(THEATERRIG_OT_export_prop.bl_idname, icon="EXPORT")
+            warn = lambda bad: "ERROR" if bad else "CHECKMARK"
+            problems = st.missing_roles or st.arkit_missing or st.mtoon or st.outlines
+            body = section("report", f"Report: {st.armature}", "ERROR" if problems else "CHECKMARK")
+            if body:
+                col = body.column(align=True)
+                col.label(text=f"{st.armature} ({st.vrm})", icon="ARMATURE_DATA")
+                col.label(text=f"Bone roles: {st.roles}, missing {st.missing_roles}", icon=warn(st.missing_roles))
+                col.label(text=f"Spring chains: {st.springs}, collider groups: {st.colliders}", icon="FORCE_WIND")
+                col.label(text=f"ARKit: {st.arkit_ok} ready, {st.arkit_approx} approximate", icon="SHAPEKEY_DATA")
+                col.label(text=f"ARKit missing: {st.arkit_missing} of 52", icon=warn(st.arkit_missing))
+                col.label(text=f"MToon materials: {st.mtoon}, outlines: {st.outlines}", icon="MATERIAL")
+                col.label(text=f"Colour slots: {st.color_slots}", icon="COLOR")
+                body.label(text=f"Details: Text editor > '{REPORT_TEXT}'")
 
+            body = section("prepare", "Prepare (in this order)", "TOOL_SETTINGS", closed=False)
+            if body:
+                col = body.column(align=True)
+                col.operator(THEATERRIG_OT_detoonify.bl_idname, icon="SHADING_SOLID")
+                col.operator(THEATERRIG_OT_rename_mixamo.bl_idname, icon="BONE_DATA")
+                col.operator(THEATERRIG_OT_rename_springs.bl_idname, icon="FORCE_WIND")
+                col.operator(THEATERRIG_OT_align_bones.bl_idname, icon="ORIENTATION_GIMBAL")
+                col.operator(THEATERRIG_OT_tpose.bl_idname, icon="ARMATURE_DATA")
+
+            body = section("colour", f"Colour slots ({st.color_slots})", "COLOR")
+            if body:
+                body.operator(THEATERRIG_OT_pick_texture.bl_idname, icon="EYEDROPPER")
+                body.prop_search(st, "color_image", bpy.data, "images", text="")
+                if st.palette:
+                    col = body.column(align=True)
+                    col.label(text="Its colours (ticked: changes; unticked: kept as painted)")
+                    for it in st.palette:
+                        r = col.row(align=True)
+                        r.prop(it, "change", text="")
+                        r.prop(it, "color", text="")
+                        r.label(text=f"{it.share * 100:.1f}%")
+                body.prop(st, "color_slot", text="Color")
+                row = body.row(align=True)
+                row.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
+                row.operator(THEATERRIG_OT_remove_color_slot.bl_idname, text="Remove", icon="LOOP_BACK")
+
+            shown = [(m, u) for m, u in overlay.overlays() if colour.PART_PROP not in m]
+            body = section("overlay", f"Overlays ({len(shown)})", "IMAGE_RGB_ALPHA")
+            if body:
+                body.label(text="A picture that keeps its colours (a logo, a design)")
+                body.operator(THEATERRIG_OT_pick_overlay_material.bl_idname, icon="EYEDROPPER")
+                body.prop_search(st, "overlay_material", bpy.data, "materials", text="")
+                body.operator(THEATERRIG_OT_add_overlay.bl_idname, icon="ADD")
+                for mat, under in shown:
+                    row = body.row()
+                    row.label(text=f"{mat.name}", icon="IMAGE_RGB_ALPHA")
+                    row.operator(THEATERRIG_OT_remove_overlay.bl_idname, text="", icon="X").material = mat.name
+
+            sets = tiles.sets(arm) if arm else {}
+            now = tiles.tested(arm)
+            body = section("tiles", f"Tile textures ({len(sets)} set{'s' if len(sets) != 1 else ''})" + (f", testing {now}" if now else ""), "TEXTURE")
+            if body:
+                body.operator(THEATERRIG_OT_pick_tile_texture.bl_idname, icon="EYEDROPPER")
+                body.prop_search(st, "tile_image", bpy.data, "images", text="")
+                row = body.row(align=True)
+                row.prop(st, "tile_columns")
+                row.prop(st, "tile_rows")
+                body.prop(st, "tile_names", text="Names")
+                body.prop(st, "tile_set", text="Set")
+                body.prop(st, "tile_default")
+                body.operator(THEATERRIG_OT_make_tiles.bl_idname, icon="MESH_GRID")
+                body.operator(THEATERRIG_OT_convert_tiles.bl_idname, icon="SHAPEKEY_DATA")
+                for group, names in sets.items():
+                    row = body.row()
+                    shown_names = ", ".join(names[:5]) + (" ..." if len(names) > 5 else "")
+                    row.label(text=f"{group or '(no set)'}: {shown_names}", icon="TEXTURE")
+                    sub = row.row(align=True)
+                    op = sub.operator(THEATERRIG_OT_step_tile.bl_idname, text="", icon="TRIA_LEFT")
+                    op.set_name, op.by = group, -1
+                    op = sub.operator(THEATERRIG_OT_step_tile.bl_idname, text="", icon="TRIA_RIGHT")
+                    op.set_name, op.by = group, 1
+                    row.operator(THEATERRIG_OT_remove_tile_set.bl_idname, text="", icon="X").set_name = group
+                if sets:
+                    row = body.row(align=True)
+                    row.operator(THEATERRIG_OT_test_tile.bl_idname, icon="HIDE_OFF")
+                    if now:
+                        row.operator(THEATERRIG_OT_restore_tiles.bl_idname, icon="LOOP_BACK")
+                        body.label(text=f"Testing: {now} (Material Preview shows it)", icon="INFO")
+
+            cloths = cloth_bones.cloths(arm) if arm else {}
+            body = section("cloth", f"Cloth bones ({len(cloths)})", "MOD_CLOTH")
+            if body:
+                body.label(text="A skirt, a cape, long hair: select its faces in Edit Mode, or pick its material:")
+                body.prop_search(st, "cloth_material", bpy.data, "materials", text="")
+                row = body.row(align=True)
+                row.prop(st, "cloth_columns")
+                row.prop(st, "cloth_rows")
+                body.prop(st, "cloth_kind")
+                if arm:
+                    body.prop_search(st, "cloth_parent", arm.data, "bones", text="Hangs from")
+                body.prop(st, "cloth_name")
+                body.operator(THEATERRIG_OT_make_cloth_bones.bl_idname, icon="MOD_CLOTH")
+                for cname, cloth in cloths.items():
+                    row = body.row()
+                    row.label(text=f"{cname}: {cloth['shape']}, {len(cloth['chains'])} × {cloth['rows']} on {cloth['mesh']}")
+                    row.operator(THEATERRIG_OT_remove_cloth.bl_idname, text="", icon="X").cloth = cname
+
+            on = spring_preview.running()
+            groups = spring_preview.kinds(arm) if arm else {}
+            body = section("springs", f"Spring bones ({len(groups)} kind{'s' if len(groups) != 1 else ''})" + (": previewing" if on else ""), "FORCE_WIND")
+            if body:
+                body.operator(THEATERRIG_OT_spring_preview.bl_idname, text="Stop Spring Preview" if on else "Start Spring Preview", icon="PAUSE" if on else "PLAY", depress=on)
+                body.prop(st, "spring_sway")
+                row = body.row(align=True)
+                row.prop(st, "spring_show_colliders")
+                row.prop(st, "spring_colliders_thick", text="Thickness")
+                if not groups:
+                    body.label(text="No spring chains yet: Rename Springs (or Make Cloth Bones) first.")
+                elif not spring_preview.grouped(arm):
+                    body.label(text="Settings by kind (one for all the hair, one for the bust…):")
+                    body.operator(THEATERRIG_OT_spring_groups.bl_idname, icon="GROUP_BONE")
+                else:
+                    body.label(text="By kind (Export writes them on every chain of the kind):")
+                    for kind, bones in groups.items():
+                        sub = body.box()
+                        sub.label(text=f"{kind.capitalize()}: {len(bones)} chain(s)", icon="BONE_DATA")
+                        grid = sub.grid_flow(columns=2, align=True)
+                        for k in spring_preview.DEFAULTS:
+                            grid.prop(arm.data, f'["{spring_preview.kind_key(kind, k)}"]', text=k.capitalize())
+                if groups:
+                    body.operator(THEATERRIG_OT_delete_unused_springs.bl_idname, icon="TRASH")
+
+        # Animations for Puppet: no avatar needed (not through it)
+        body = section("animations", "Animations (Puppet's Animation folder)", "ACTION")
+        if body:
+            body.operator(THEATERRIG_OT_import_mixamo.bl_idname, icon="IMPORT")
+            body.operator(THEATERRIG_OT_export_animations.bl_idname, icon="EXPORT")
+            body.operator(THEATERRIG_OT_convert_mixamo.bl_idname, icon="FILE_REFRESH")
+
+        if st.analysed:
+            body = section("export", "Export", "EXPORT", closed=False)
+            if body:
+                # The avatar's own animation: in its GLB, looped by Puppet, autoplayed elsewhere
+                if arm is not None:
+                    body.prop_search(arm.data, export.DEFAULT_PROP, bpy.data, "actions", text="Default animation", icon="ACTION")
+                    body.operator(THEATERRIG_OT_remove_animations.bl_idname, icon="TRASH")
+                body.label(text="Last (removes colliders and VRM data):")
+                body.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
+                body.label(text="A prop or part, lined up with it (selected meshes, no armature):")
+                body.operator(THEATERRIG_OT_export_prop.bl_idname, icon="EXPORT")
 
 CLASSES = (
     TheaterRigColour,
