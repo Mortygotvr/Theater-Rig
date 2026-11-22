@@ -83,7 +83,7 @@ class THEATERRIG_OT_align_bones(bpy.types.Operator):
 
 class _MixamoFiles(ImportHelper):
     filename_ext = ".fbx"
-    filter_glob: bpy.props.StringProperty(default="*.fbx", options={"HIDDEN"})
+    filter_glob: bpy.props.StringProperty(default="*.fbx;*.dae", options={"HIDDEN"})
     files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
     directory: bpy.props.StringProperty(subtype="DIR_PATH", options={"HIDDEN", "SKIP_SAVE"})
 
@@ -92,7 +92,7 @@ class _MixamoFiles(ImportHelper):
 
 
 class THEATERRIG_OT_import_mixamo(bpy.types.Operator, _MixamoFiles):
-    """Mixamo animations (FBX, with or without skin) into the scene, each as its own
+    """Mixamo animations (FBX, or DAE downloaded With Skin) into the scene, each as its own
     skeleton named after the file, next to the avatar (not on it): watch it, change it,
     then Export Animation. Undo with Ctrl+Z"""
 
@@ -123,7 +123,7 @@ class THEATERRIG_OT_import_mixamo(bpy.types.Operator, _MixamoFiles):
 
 
 class THEATERRIG_OT_convert_mixamo(bpy.types.Operator, _MixamoFiles):
-    """Mixamo animations (FBX) straight to animation GLBs for Theater Puppet: one per
+    """Mixamo animations (FBX, or DAE With Skin) straight to animation GLBs for Theater Puppet: one per
     file, next to it, same name (Import Mixamo and Export Animation at once).
     Nothing changes in the scene"""
 

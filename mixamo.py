@@ -1,5 +1,5 @@
-"""Mixamo animations. Import Mixamo: each file (Mixamo's "FBX Binary", with or
-without skin) as its own skeleton in the scene, next to the avatar, not on
+"""Mixamo animations. Import Mixamo: each file (Mixamo's "FBX Binary", or
+Collada .dae "With Skin": dae.py) as its own skeleton in the scene, next to the avatar, not on
 it: Mixamo's T-pose, bones named without "mixamorig:", its animation as an
 action named after the file, to watch or change. Export Animation
 (anim_export.py) then writes it for Theater Puppet. Convert: both at once, the
@@ -11,8 +11,9 @@ import re
 import bpy
 
 from . import anim_export
+from . import dae
 
-PREFIX = re.compile(r"^mixamorig\d*:", re.I)
+PREFIX = re.compile(r"^mixamorig\d*[:_]", re.I)
 KINDS = ("objects", "armatures", "meshes", "materials", "actions", "images", "textures")
 
 
@@ -26,8 +27,10 @@ def _read(context, path):
     ext = os.path.splitext(path)[1].lower()
     if ext == ".fbx":
         bpy.ops.import_scene.fbx(filepath=path)
+    elif ext == ".dae":
+        dae.read(context, path)
     else:
-        raise RuntimeError(f"{os.path.basename(path)}: not an FBX")
+        raise RuntimeError(f"{os.path.basename(path)}: not an FBX or a DAE")
     return {k: set(getattr(bpy.data, k)) - v for k, v in before.items()}
 
 
