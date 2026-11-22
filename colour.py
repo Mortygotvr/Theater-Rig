@@ -1,6 +1,7 @@
 """Colour slots: a texture becomes greyscale and follows colour slot N.
 
-The grey copy is each pixel's brightest channel, and the material goes plain
+The grey copy is each pixel's brightest channel (brightened: its lightest
+part white, so a colour picked shows at its own brightness), and the material goes plain
 grey (no colour factor): the renderer multiplies it by slot N's colour. The
 colour it had is kept as the material property `color_default` (glTF extras),
 a starting colour for the slot. The copy, and every material using the
@@ -125,6 +126,12 @@ def _greyscale(img):
     seen = alpha > 0.5          # atlas gaps don't count
     if not seen.any():
         seen = np.ones_like(alpha, dtype=bool)
+    # Brightened so its lightest (the top 5%) is white: a colour picked shows
+    # as bright as it is (a mid-grey fabric would make every colour a third
+    # as bright); the tint darkened as much, so it looks as it was until then
+    top = float(np.percentile(grey[seen], 95)) if seen.any() else 1.0
+    if top > 0.05:
+        grey = np.clip(grey / top, 0.0, 1.0)
     tint = rgb[seen].mean(axis=0) / max(float(grey[seen].mean()), 1e-4)
     out = np.empty_like(px)
     out[:, 0] = out[:, 1] = out[:, 2] = grey
