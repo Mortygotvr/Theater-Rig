@@ -129,8 +129,8 @@ n = struct.unpack("<I", data[12:16])[0]
 gltf = json.loads(data[20:20 + n])
 anims = [a.get("name") for a in gltf.get("animations", [])]
 print("GLB animations:", anims)
-if name not in anims:
-    problems.append(f"{name} isn't in the GLB")
+if anims:
+    problems.append(f"the avatar's GLB has animations: {anims} (Export leaves them out)")
 if any("mixamo.com" in (a or "") for a in anims):
     problems.append("the FBX's own action went into the GLB too")
 

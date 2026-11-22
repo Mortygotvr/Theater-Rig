@@ -406,7 +406,7 @@ class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
 
 class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
     """Removes the VRM colliders and VRM data, then exports the avatar as a GLB with the
-    options the renderer needs (custom properties, shape keys, skin, each action as a clip).
+    options the renderer needs (custom properties, shape keys, skin; no animation).
     Ctrl+Z brings the colliders and VRM data back"""
 
     bl_idname = "theater_rig.export"

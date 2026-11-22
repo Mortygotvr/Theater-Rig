@@ -2,9 +2,9 @@
 options the renderer needs. First the tile textures are copied from the VRM
 expressions (tiles.py), then the VRM colliders and VRM data go (see
 strip.py). Custom properties go in as extras (shade_color, color_default,
-spring settings, theater_tiles); shape keys, skin and animations (the
-renderer plays them) are kept; modifiers aren't applied (that would drop the
-shape keys)."""
+spring settings, theater_tiles); shape keys and skin are kept; no animation
+(Puppet takes them from its Animation folder: Rig's animation GLBs);
+modifiers aren't applied (that would drop the shape keys)."""
 
 import bpy
 
@@ -69,8 +69,9 @@ def export_glb(context, filepath):
             export_apply=False,
             export_skins=True,
             export_morph=True,
-            # The avatar's own animations (each action a clip; the renderer plays them)
-            export_animations=True,
+            # No animation: the model only (animations are their own GLBs,
+            # in Puppet's Animation folder)
+            export_animations=False,
             export_yup=True,
         )
     finally:
