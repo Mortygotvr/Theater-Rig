@@ -16,6 +16,7 @@ from . import colour
 from . import detoon
 from . import export
 from . import mixamo
+from . import anim_export
 from . import rename
 from . import springs
 from . import strip
@@ -80,76 +81,127 @@ class THEATERRIG_OT_align_bones(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class THEATERRIG_OT_import_mixamo(bpy.types.Operator, ImportHelper):
-    """Mixamo animations (FBX, with or without skin) onto the avatar: each file one
-    action named after it, on its own NLA track, exported as a clip Theater Puppet plays.
-    Needs Rename to Mixamo and a T-pose first. Undo with Ctrl+Z"""
-
-    bl_idname = "theater_rig.import_mixamo"
-    bl_label = "Import Mixamo Animations"
-    bl_options = {"REGISTER", "UNDO"}
-
+class _MixamoFiles(ImportHelper):
     filename_ext = ".fbx"
     filter_glob: bpy.props.StringProperty(default="*.fbx", options={"HIDDEN"})
     files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
     directory: bpy.props.StringProperty(subtype="DIR_PATH", options={"HIDDEN", "SKIP_SAVE"})
 
+    def paths(self):
+        return [os.path.join(self.directory, f.name) for f in self.files if f.name] or [self.filepath]
+
+
+class THEATERRIG_OT_import_mixamo(bpy.types.Operator, _MixamoFiles):
+    """Mixamo animations (FBX, with or without skin) into the scene, each as its own
+    skeleton named after the file, next to the avatar (not on it): watch it, change it,
+    then Export Animation. Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.import_mixamo"
+    bl_label = "Import Mixamo"
+    bl_options = {"REGISTER", "UNDO"}
+
     def execute(self, context):
-        arm = an.find_armature(context)
-        if arm is None:
-            self.report({"ERROR"}, "No armature")
-            return {"CANCELLED"}
-        bent = mixamo.not_t_posed(arm)
-        if bent:
-            self.report({"ERROR"}, "The avatar isn't in a T-pose (" + ", ".join(f"{b} {d} deg" for b, d in bent[:3]) + "): press T-Pose first")
-            return {"CANCELLED"}
-        paths = [os.path.join(self.directory, f.name) for f in self.files if f.name] or [self.filepath]
-        done, failed, lacking = [], [], set()
-        for path in paths:
+        done, failed, made = [], [], []
+        for path in self.paths():
             try:
-                name, frames, _, missing = mixamo.import_fbx(context, path, arm)
-                done.append(f"{name} ({frames} frames)")
-                lacking.update(missing)
+                arm, frames, _ = mixamo.import_file(context, path)
+                made.append(arm)
+                done.append(f"{arm.name} ({frames} frames)")
             except Exception as e:
                 failed.append(f"{os.path.basename(path)}: {e}")
+        view = context.view_layer
+        if made:
+            for o in [o for o in view.objects if o is not None]:
+                o.select_set(o in made)
+            view.objects.active = made[-1]
         if failed:
             self.report({"WARNING"}, "Not imported: " + "; ".join(failed))
         if done:
-            extra = f"; the avatar has no {', '.join(sorted(lacking)[:6])}" if lacking else ""
-            self.report({"INFO"}, f"Imported {', '.join(done)} (each on its own NLA track, exported as a clip){extra}")
+            self.report({"INFO"}, f"Imported {', '.join(done)}: select it and Export Animation for Puppet")
             return {"FINISHED"}
         return {"CANCELLED"}
 
 
-class THEATERRIG_OT_convert_mixamo(bpy.types.Operator, ImportHelper):
-    """Mixamo animations (FBX) as animation GLBs for Theater Puppet: one per file, next to
-    it, same name. Puppet puts them on any avatar (its Animation folder). No avatar
-    needed, nothing changes in the scene"""
+class THEATERRIG_OT_convert_mixamo(bpy.types.Operator, _MixamoFiles):
+    """Mixamo animations (FBX) straight to animation GLBs for Theater Puppet: one per
+    file, next to it, same name (Import Mixamo and Export Animation at once).
+    Nothing changes in the scene"""
 
     bl_idname = "theater_rig.convert_mixamo"
     bl_label = "Convert Mixamo to Animation GLB"
     bl_options = {"REGISTER"}
 
-    filename_ext = ".fbx"
-    filter_glob: bpy.props.StringProperty(default="*.fbx", options={"HIDDEN"})
-    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
-    directory: bpy.props.StringProperty(subtype="DIR_PATH", options={"HIDDEN", "SKIP_SAVE"})
-
     def execute(self, context):
-        paths = [os.path.join(self.directory, f.name) for f in self.files if f.name] or [self.filepath]
+        paths = self.paths()
         done, failed = [], []
         for path in paths:
             try:
-                out, frames = mixamo.convert_fbx(context, path)
+                out, _ = mixamo.convert(context, path)
                 done.append(os.path.basename(out))
             except Exception as e:
                 failed.append(f"{os.path.basename(path)}: {e}")
         if failed:
             self.report({"WARNING"}, "Not converted: " + "; ".join(failed))
         if done:
-            self.report({"INFO"}, f"Made {', '.join(done)} in {os.path.dirname(paths[0])}: set it as Puppet's Animation folder")
+            self.report({"INFO"}, f"Made {', '.join(done)} in {os.path.dirname(paths[0])}: Puppet's Animation folder")
             return {"FINISHED"}
         return {"CANCELLED"}
+
+
+def _animation_skeletons(context):
+    """The selected armatures with Mixamo bone names (else the active object, if it is one)."""
+    sel = [o for o in context.selected_objects if anim_export.is_mixamo(o)]
+    if not sel and anim_export.is_mixamo(context.active_object):
+        sel = [context.active_object]
+    return sel
+
+
+class THEATERRIG_OT_export_animations(bpy.types.Operator):
+    """The selected skeletons' animations (any armature with Mixamo bone names, in a
+    T-pose: an imported Mixamo one, the avatar's…) as animation GLBs for Theater
+    Puppet's Animation folder: each action its own GLB, named after it, with its
+    contact frames. Any avatar plays them. (Export GLB has no animation)"""
+
+    bl_idname = "theater_rig.export_animations"
+    bl_label = "Export Animation"
+    bl_options = {"REGISTER"}
+
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")
+    filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN"})
+
+    def _check(self, context):
+        arms = _animation_skeletons(context)
+        if not arms:
+            return None, "Select a skeleton with Mixamo bone names (Import Mixamo, or Rename to Mixamo)"
+        if not any(anim_export.actions_of(a) for a in arms):
+            return None, "No animation on the selected skeleton(s): make one in the Dope Sheet"
+        for a in arms:
+            bent = anim_export.not_t_posed(a)
+            if bent:
+                return None, f"{a.name} isn't in a T-pose at rest (" + ", ".join(f"{b} {d} deg" for b, d in bent[:3]) + "): Puppet needs one"
+        return arms, ""
+
+    def invoke(self, context, event):
+        arms, why = self._check(context)
+        if arms is None:
+            self.report({"ERROR"}, why)
+            return {"CANCELLED"}
+        if not self.directory:
+            base = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.path.expanduser("~")
+            self.directory = os.path.join(base, "animations") + os.sep
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        arms, why = self._check(context)
+        if arms is None:
+            self.report({"ERROR"}, why)
+            return {"CANCELLED"}
+        done = []
+        for a in arms:
+            done += anim_export.export_actions(context, a, self.directory)
+        self.report({"INFO"}, f"Exported {', '.join(n for n, _ in done)} to {self.directory}: Puppet's Animation folder")
+        return {"FINISHED"}
 
 
 class THEATERRIG_OT_tpose(bpy.types.Operator):
@@ -694,8 +746,12 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
     def draw(self, context):
         lay = self.layout
         lay.operator(THEATERRIG_OT_analyse.bl_idname, icon="VIEWZOOM")
-        # Needs no avatar: Mixamo files straight to Puppet's animation GLBs
-        lay.operator(THEATERRIG_OT_convert_mixamo.bl_idname, icon="EXPORT")
+        # Animations for Puppet: no avatar needed (not through it)
+        box = lay.box()
+        box.label(text="Animations (Puppet's Animation folder)", icon="ACTION")
+        box.operator(THEATERRIG_OT_import_mixamo.bl_idname, icon="IMPORT")
+        box.operator(THEATERRIG_OT_export_animations.bl_idname, icon="EXPORT")
+        box.operator(THEATERRIG_OT_convert_mixamo.bl_idname, icon="FILE_REFRESH")
         st = context.scene.theater_rig
         if not st.analysed:
             lay.label(text="Select the avatar, then Analyse.")
@@ -716,7 +772,6 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         lay.operator(THEATERRIG_OT_rename_springs.bl_idname, icon="FORCE_WIND")
         lay.operator(THEATERRIG_OT_align_bones.bl_idname, icon="ORIENTATION_GIMBAL")
         lay.operator(THEATERRIG_OT_tpose.bl_idname, icon="ARMATURE_DATA")
-        lay.operator(THEATERRIG_OT_import_mixamo.bl_idname, icon="ACTION")
         box = lay.box()
         box.label(text="Colour slot", icon="COLOR")
         box.operator(THEATERRIG_OT_pick_texture.bl_idname, icon="EYEDROPPER")
@@ -810,6 +865,7 @@ CLASSES = (
     THEATERRIG_OT_tpose,
     THEATERRIG_OT_import_mixamo,
     THEATERRIG_OT_convert_mixamo,
+    THEATERRIG_OT_export_animations,
     THEATERRIG_OT_pick_texture,
     THEATERRIG_OT_make_color_slot,
     THEATERRIG_OT_pick_tile_texture,

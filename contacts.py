@@ -13,6 +13,9 @@ import bpy
 
 WORD = "contact"
 EXTRA = "theater_contacts"
+# Export Animations (anim_export.py): (the clip's name, its action) while one
+# action is exported alone (the exporter calls it "Animation")
+export_as = None
 
 
 def is_contact(marker):
@@ -40,6 +43,8 @@ class glTF2ExportUserExtension:
         scene = bpy.context.scene
         for anim in animations or []:
             action = bpy.data.actions.get(getattr(anim, "name", "") or "")
+            if action is None and export_as is not None and len(animations) == 1:
+                anim.name, action = export_as
             if action is None:
                 continue
             found = times(action, scene)
