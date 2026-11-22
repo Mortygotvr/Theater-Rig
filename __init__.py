@@ -52,6 +52,9 @@ class THEATERRIG_OT_rename_springs(bpy.types.Operator):
 
     def execute(self, context):
         arm, chains = springs.rename_springs(context)
+        if arm is not None:
+            # Their settings by kind, from the chains' own (the VRM's)
+            spring_preview.ensure_settings(arm)
         if arm is None:
             self.report({"ERROR"}, "No armature")
             return {"CANCELLED"}
@@ -421,6 +424,23 @@ class THEATERRIG_OT_analyse(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_spring_groups(bpy.types.Operator):
+    """One set of settings per kind of spring (hair, bust, skirt…), started from the average of each kind's chains"""
+
+    bl_idname = "theater_rig.spring_groups"
+    bl_label = "Group by Kind"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        if arm is None or not spring_preview.roots(arm):
+            self.report({"ERROR"}, "No spring_<kind>_<n> chains: Rename Springs first")
+            return {"CANCELLED"}
+        spring_preview.ensure_settings(arm)
+        self.report({"INFO"}, f"{len(spring_preview.kinds(arm))} kind(s): " + ", ".join(spring_preview.kinds(arm)))
+        return {"FINISHED"}
+
+
 class THEATERRIG_OT_spring_preview(bpy.types.Operator):
     """Swings the spring chains (spring_<kind>_<n>) as Theater Puppet does: move the
     armature, pose it or play an animation to see them. Click again to stop: every
@@ -473,6 +493,9 @@ class THEATERRIG_OT_make_cloth_bones(bpy.types.Operator):
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         st.cloth_name = name
+        cloth_arm = an.find_armature(context)
+        if cloth_arm is not None:
+            spring_preview.ensure_settings(cloth_arm)
         self.report({"INFO"}, f"Cloth '{name}': a {shape} of {len(chains)} chain(s) of {st.cloth_rows} bone(s). Try it with Spring Preview")
         return {"FINISHED"}
 
@@ -616,20 +639,20 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.prop(st, "spring_show_colliders")
         row.prop(st, "spring_colliders_thick", text="Thickness")
-        chains = spring_preview.roots(arm) if arm else []
-        if chains:
-            box.label(text="Each chain (on its root bone; Export keeps them):")
-            for bone in chains:
-                sub = box.box()
-                sub.label(text=bone.name[:-2], icon="BONE_DATA")
-                if all(f"spring_{k}" in bone.keys() for k in spring_preview.DEFAULTS):
-                    grid = sub.grid_flow(columns=2, align=True)
-                    for k in spring_preview.DEFAULTS:
-                        grid.prop(bone, f'["spring_{k}"]', text=k.capitalize())
-                else:
-                    sub.label(text="Puppet's defaults (the preview adds them)")
+        groups = spring_preview.kinds(arm) if arm else {}
+        if not groups:
+            box.label(text="No spring chains yet: Rename Springs (or Make Cloth Bones) first.")
+        elif not spring_preview.grouped(arm):
+            box.label(text="Settings by kind (one for all the hair, one for the bust…):")
+            box.operator(THEATERRIG_OT_spring_groups.bl_idname, icon="GROUP_BONE")
         else:
-            box.label(text="No spring chains yet: Rename Springs first.")
+            box.label(text="By kind (Export writes them on every chain of the kind):")
+            for kind, bones in groups.items():
+                sub = box.box()
+                sub.label(text=f"{kind.capitalize()}: {len(bones)} chain(s)", icon="BONE_DATA")
+                grid = sub.grid_flow(columns=2, align=True)
+                for k in spring_preview.DEFAULTS:
+                    grid.prop(arm.data, f'["{spring_preview.kind_key(kind, k)}"]', text=k.capitalize())
         lay.separator()
         lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
@@ -654,6 +677,7 @@ CLASSES = (
     THEATERRIG_OT_test_tile,
     THEATERRIG_OT_step_tile,
     THEATERRIG_OT_restore_tiles,
+    THEATERRIG_OT_spring_groups,
     THEATERRIG_OT_spring_preview,
     THEATERRIG_OT_make_cloth_bones,
     THEATERRIG_OT_remove_cloth,

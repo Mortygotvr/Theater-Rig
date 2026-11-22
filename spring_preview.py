@@ -13,6 +13,10 @@ them before exporting.
 - It runs in the world: moving the armature, posing its bones or playing an
   animation swings them. "Sway the body" turns the hips back and forth.
   Stopping puts every bone back as it was.
+- Settings by kind: every hair chain one hair setting, every bust chain one
+  bust setting… kept on the armature (spring_<kind>_<setting>), started
+  from the average of that kind's chains. Export writes them on each chain's
+  root (sync), so the GLB still has them per chain, as Puppet reads them.
 """
 
 import math
@@ -51,12 +55,55 @@ def roots(arm):
     return sorted((b for b in arm.data.bones if (c := chain_of(b.name)) and c[1] == 0), key=lambda b: b.name)
 
 
+def kind_of(name):
+    """A chain's (or its bone's) kind: spring_hair_3_0 -> hair."""
+    c = chain_of(name)
+    return c[0].split("_")[1] if c else None
+
+
+def kinds(arm):
+    """{kind: [its chains' root bones]}, kinds in name order."""
+    out = {}
+    for bone in roots(arm):
+        out.setdefault(kind_of(bone.name), []).append(bone)
+    return dict(sorted(out.items()))
+
+
+def kind_key(kind, setting):
+    """A kind's setting, on the armature: spring_hair_stiffness."""
+    return f"spring_{kind}_{setting}"
+
+
+def grouped(arm):
+    """Whether every kind has its settings."""
+    return all(kind_key(kind, k) in arm.data.keys() for kind in kinds(arm) for k in DEFAULTS)
+
+
 def ensure_settings(arm):
-    """Every chain root has its four settings (Puppet's defaults where missing)."""
+    """Every chain root has its four settings (Puppet's defaults where
+    missing), and every kind its own (the average of its chains', once)."""
     for bone in roots(arm):
         for k, v in DEFAULTS.items():
             if f"spring_{k}" not in bone.keys():
                 bone[f"spring_{k}"] = v
+    for kind, bones in kinds(arm).items():
+        for k in DEFAULTS:
+            if kind_key(kind, k) not in arm.data.keys():
+                arm.data[kind_key(kind, k)] = round(sum(float(b[f"spring_{k}"]) for b in bones) / len(bones), 3)
+
+
+def sync(arm):
+    """Each kind's settings on every chain of that kind (Export, before it
+    writes the GLB: Puppet reads them per chain). Returns how many chains."""
+    n = 0
+    for kind, bones in kinds(arm).items():
+        if not all(kind_key(kind, k) in arm.data.keys() for k in DEFAULTS):
+            continue
+        for bone in bones:
+            for k in DEFAULTS:
+                bone[f"spring_{k}"] = float(arm.data[kind_key(kind, k)])
+            n += 1
+    return n
 
 
 def _closest_on_segment(p, a, b):
@@ -67,7 +114,20 @@ def _closest_on_segment(p, a, b):
 
 
 def _avatar_meshes(arm):
-    return [o for o in bpy.data.objects if o.type == "MESH" and (o.parent == arm or any(m.type == "ARMATURE" and m.object == arm for m in o.modifiers))]
+    """The meshes the armature deforms, in the scene: an Armature modifier on
+    it (turned on), or the armature as its parent by the skeleton. Not a mesh
+    left out of the scene (an old copy of the body, still pointing at it, no
+    longer where the bones are: its colliders would be metres wide), nor one
+    only parented (it doesn't bend)."""
+    in_scene = set(bpy.context.view_layer.objects) if bpy.context.view_layer else set(bpy.data.objects)
+    out = []
+    for o in bpy.data.objects:
+        if o.type != "MESH" or o not in in_scene:
+            continue
+        deformed = any(m.type == "ARMATURE" and m.object == arm and m.show_viewport for m in o.modifiers)
+        if deformed or (o.parent == arm and o.parent_type == "ARMATURE"):
+            out.append(o)
+    return out
 
 
 def colliders_of(arm):
@@ -179,8 +239,14 @@ class Preview:
         self.reset()
 
     def settings(self, root):
+        """A chain's settings: its kind's (live: the panel's), else its own."""
         bone = self.arm.data.bones.get(root)
-        return {k: float(bone.get(f"spring_{k}", v)) if bone else v for k, v in DEFAULTS.items()}
+        kind = kind_of(root)
+        out = {}
+        for k, v in DEFAULTS.items():
+            own = float(bone.get(f"spring_{k}", v)) if bone else v
+            out[k] = float(self.arm.data.get(kind_key(kind, k), own)) if kind else own
+        return out
 
     def _posed(self, name, computed):
         """A bone's matrix now (armature space): one moved this step, or as Blender has it."""
