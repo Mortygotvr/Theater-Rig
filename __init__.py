@@ -16,6 +16,7 @@ from . import colour
 from . import detoon
 from . import export
 from . import mixamo
+from . import overlay
 from . import anim_export
 from . import rename
 from . import springs
@@ -239,6 +240,80 @@ class THEATERRIG_OT_remove_animations(bpy.types.Operator):
             return {"CANCELLED"}
         kept = export.default_action(arm)
         self.report({"INFO"}, f"Removed {', '.join(gone)}" + (f" (kept the Default, {kept.name})" if kept else ""))
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_pick_overlay_material(bpy.types.Operator):
+    """Takes the material of the selection: in Edit Mode the selected faces', else the active one"""
+
+    bl_idname = "theater_rig.pick_overlay_material"
+    bl_label = "Pick from Selected"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    def execute(self, context):
+        mat = colour.material_of_selection(context)
+        if mat is None:
+            self.report({"ERROR"}, "No material on the selection")
+            return {"CANCELLED"}
+        if overlay.PROP in mat:
+            self.report({"ERROR"}, f"{mat.name} is an overlay: pick the material under it")
+            return {"CANCELLED"}
+        context.scene.theater_rig.overlay_material = mat
+        self.report({"INFO"}, mat.name)
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_add_overlay(bpy.types.Operator, ImportHelper):
+    """A picture over the material's texture (a logo, a tattoo, painted clothes): a PNG painted on
+    the same UV layout, transparent where there's nothing. Its faces are copied a hair's width
+    out with the picture's material: they bend with the body, take colour slots and tiles. Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.add_overlay"
+    bl_label = "Add Overlay…"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filename_ext = ".png"
+    filter_glob: bpy.props.StringProperty(default="*.png;*.webp;*.tga", options={"HIDDEN"})
+
+    def invoke(self, context, event):
+        base = context.scene.theater_rig.overlay_material
+        if base is None:
+            self.report({"ERROR"}, "Choose the material it lies on first (Pick from Selected)")
+            return {"CANCELLED"}
+        return ImportHelper.invoke(self, context, event)
+
+    def execute(self, context):
+        base = context.scene.theater_rig.overlay_material
+        if base is None:
+            self.report({"ERROR"}, "Choose the material it lies on first")
+            return {"CANCELLED"}
+        try:
+            image = bpy.data.images.load(self.filepath, check_existing=True)
+            image.alpha_mode = "STRAIGHT"
+            image.pack()
+            mat, faces = overlay.add(base, image)
+        except Exception as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"{mat.name}: {faces} face(s) over {base.name}")
+        return {"FINISHED"}
+
+
+class THEATERRIG_OT_remove_overlay(bpy.types.Operator):
+    """Takes the overlay off: its faces and its material (the material under it is untouched). Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.remove_overlay"
+    bl_label = "Remove Overlay"
+    bl_options = {"REGISTER", "UNDO", "INTERNAL"}
+
+    material: bpy.props.StringProperty()
+
+    def execute(self, context):
+        mat = bpy.data.materials.get(self.material)
+        if mat is None:
+            return {"CANCELLED"}
+        faces = overlay.remove(mat)
+        self.report({"INFO"}, f"Removed {self.material} ({faces} face(s))")
         return {"FINISHED"}
 
 
@@ -757,6 +832,7 @@ class TheaterRigState(bpy.types.PropertyGroup):
     outlines: bpy.props.IntProperty()
     color_slots: bpy.props.IntProperty()
     color_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
+    overlay_material: bpy.props.PointerProperty(type=bpy.types.Material, name="Material", description="The material the overlay lies on (its texture's UV layout)")
     color_slot: bpy.props.IntProperty(name="Slot", min=0, max=99)
     tile_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
     tile_columns: bpy.props.IntProperty(name="Columns", min=1, max=64, default=2)
@@ -816,6 +892,15 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         box.prop_search(st, "color_image", bpy.data, "images", text="")
         box.prop(st, "color_slot", text="Color")
         box.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
+        box = lay.box()
+        box.label(text="Overlay (a logo, a tattoo, painted clothes)", icon="IMAGE_RGB_ALPHA")
+        box.operator(THEATERRIG_OT_pick_overlay_material.bl_idname, icon="EYEDROPPER")
+        box.prop_search(st, "overlay_material", bpy.data, "materials", text="")
+        box.operator(THEATERRIG_OT_add_overlay.bl_idname, icon="ADD")
+        for mat, under in overlay.overlays():
+            row = box.row()
+            row.label(text=f"{mat.name}", icon="IMAGE_RGB_ALPHA")
+            row.operator(THEATERRIG_OT_remove_overlay.bl_idname, text="", icon="X").material = mat.name
         box = lay.box()
         box.label(text="Tile textures", icon="TEXTURE")
         box.operator(THEATERRIG_OT_pick_tile_texture.bl_idname, icon="EYEDROPPER")
@@ -908,6 +993,9 @@ CLASSES = (
     THEATERRIG_OT_tpose,
     THEATERRIG_OT_import_mixamo,
     THEATERRIG_OT_convert_mixamo,
+    THEATERRIG_OT_pick_overlay_material,
+    THEATERRIG_OT_add_overlay,
+    THEATERRIG_OT_remove_overlay,
     THEATERRIG_OT_export_animations,
     THEATERRIG_OT_remove_animations,
     THEATERRIG_OT_pick_texture,

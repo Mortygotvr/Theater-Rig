@@ -37,6 +37,26 @@ def base_image(mat):
     return tex.image if tex else None
 
 
+def material_of_selection(context):
+    """The material the selection shows: in Edit Mode the one most selected
+    faces use, else the active object's active one."""
+    import bmesh
+    if context.mode == "EDIT_MESH":
+        counts = {}
+        for obj in context.objects_in_mode or [context.active_object]:
+            if obj is None or obj.type != "MESH":
+                continue
+            for f in bmesh.from_edit_mesh(obj.data).faces:
+                if f.select and f.material_index < len(obj.material_slots):
+                    m = obj.material_slots[f.material_index].material
+                    if m is not None:
+                        counts[m] = counts.get(m, 0) + 1
+        if counts:
+            return max(counts, key=counts.get)
+    obj = context.active_object
+    return obj.active_material if obj else None
+
+
 def images_of_selection(context):
     """The base colour textures the selection shows: [(image, [material names],
     faces)], most faces first. In Edit Mode, those of the selected faces (a
