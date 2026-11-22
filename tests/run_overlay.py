@@ -1,8 +1,8 @@
 """Headless test of overlays (Rig enabled as Blender enables it): a PNG laid
 over a VRM's face material. Its faces are copied a hair's width out (in a
 shape key too), keep their weights (posed, the copy follows), get the
-overlay's material (marked, listed); it takes a colour slot; the export has
-it blended with its picture; Remove puts the mesh back as it was.
+overlay's material (marked, listed); it keeps its own colours (no slot); the
+export has it blended with its picture; Remove puts the mesh back as it was.
 
 blender --background --python tests/run_overlay.py -- <model.vrm> <out dir>
 """
@@ -55,7 +55,6 @@ print("base:", base.name, n_base, "faces")
 
 st = bpy.context.scene.theater_rig
 st.overlay_material = base
-st.overlay_make_slot, st.overlay_slot = True, 5
 base_name = base.name
 res = bpy.ops.theater_rig.add_overlay("EXEC_DEFAULT", filepath=png)
 mats = ov.overlays()
@@ -100,11 +99,11 @@ if max(dp) > ov.LIFT * 3:
     problems.append("posed, the copy comes off the face")
 pb.rotation_euler = (0, 0, 0)
 
-# The colour slot on the overlay (what changes colour), not on the texture under it
-if not any("Color5" in m.name for m, _ in ov.overlays()):
-    problems.append("the overlay isn't Color5")
-if "Color" in base.name or base.name != base_name:
-    problems.append(f"the material under it got the slot: {base.name}")
+# An overlay keeps its own colours: no colour slot, the material under it untouched
+if any("Color" in m.name for m, _ in ov.overlays()):
+    problems.append("the overlay got a colour slot")
+if base.name != base_name:
+    problems.append(f"the material under it changed: {base.name}")
 
 # Exported: blended, its picture
 out = os.path.join(outdir, "overlay.glb")
@@ -115,7 +114,7 @@ n = struct.unpack("<I", data[12:16])[0]
 g = json.loads(data[20:20 + n])
 em = next((m for m in g["materials"] if m["name"] == mat.name), None)
 print("GLB:", em and (em["name"], em.get("alphaMode"), "texture" if em.get("pbrMetallicRoughness", {}).get("baseColorTexture") else None))
-if em is None or em.get("alphaMode") != "BLEND" or not em.get("pbrMetallicRoughness", {}).get("baseColorTexture"):
+if em is None or em.get("alphaMode") != "BLEND" or not em.get("pbrMetallicRoughness", {}).get("baseColorTexture") or (em.get("extras") or {}).get("color_default"):
     problems.append("the overlay isn't exported blended with its picture")
 
 # Removed: the mesh as it was

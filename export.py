@@ -80,6 +80,8 @@ def export_glb(context, filepath):
         ad.action, ad.use_nla = act, False
     from . import contacts
     contacts.export_as = (act.name, act) if act is not None else None
+    from . import colour
+    previews = colour.neutral_previews().__enter__()
     try:
         bpy.ops.export_scene.gltf(
             filepath=filepath,
@@ -94,6 +96,7 @@ def export_glb(context, filepath):
             export_yup=True,
         )
     finally:
+        previews.__exit__(None, None, None)
         contacts.export_as = None
         if keep is not None:
             ad.action, ad.use_nla = keep

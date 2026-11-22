@@ -264,9 +264,9 @@ class THEATERRIG_OT_pick_overlay_material(bpy.types.Operator):
 
 
 class THEATERRIG_OT_add_overlay(bpy.types.Operator, ImportHelper):
-    """A picture over the material's texture (a logo, a tattoo, painted clothes): a PNG painted on
-    the same UV layout, transparent where there's nothing. Its faces are copied a hair's width
-    out with the picture's material: they bend with the body, take colour slots and tiles. Undo with Ctrl+Z"""
+    """A picture over the material's texture (a logo, a tattoo, a design): a PNG painted on the same
+    UV layout, transparent where there's nothing. It keeps its own colours (for a part that changes
+    colour: Make Colour Slot, its colours ticked). Undo with Ctrl+Z"""
 
     bl_idname = "theater_rig.add_overlay"
     bl_label = "Add Overlay…"
@@ -295,14 +295,7 @@ class THEATERRIG_OT_add_overlay(bpy.types.Operator, ImportHelper):
         except Exception as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        st = context.scene.theater_rig
-        if st.overlay_make_slot:
-            # The overlay is what changes colour: its texture greyed, following the slot
-            colour.make_color_slot(image, st.overlay_slot)
-            self.report({"INFO"}, f"{mat.name}: {faces} face(s) over {base.name}, following Color{st.overlay_slot}")
-            bpy.ops.theater_rig.analyse()
-        else:
-            self.report({"INFO"}, f"{mat.name}: {faces} face(s) over {base.name}")
+        self.report({"INFO"}, f"{mat.name}: {faces} face(s) over {base.name}")
         return {"FINISHED"}
 
 
@@ -584,8 +577,9 @@ def colour_users(image):
 
 
 class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
-    """Makes a greyscale copy of the texture named Color<N>; the materials using it turn
-    grey, get Color<N> in their name, and keep their old colour as 'color_default'. Undo with Ctrl+Z"""
+    """The texture's ticked colours follow colour slot N (in Blender too: a Multiply node with the
+    slot's colour, which you can change to try one); the unticked ones stay as painted. All
+    ticked: the whole texture. Undo with Ctrl+Z, or Remove"""
 
     bl_idname = "theater_rig.make_color_slot"
     bl_label = "Make Colour Slot"
@@ -609,7 +603,21 @@ class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
         if st.color_image is None:
             self.report({"ERROR"}, "Choose a texture first")
             return {"CANCELLED"}
-        grey, mats = colour.make_color_slot(st.color_image, st.color_slot)
+        import json
+        fams = [(tuple(it.color), it.share, [tuple(m) for m in json.loads(it.members or "[]")] or [tuple(it.color)]) for it in st.palette]
+        picked = [it.change for it in st.palette]
+        if fams and not any(picked):
+            self.report({"ERROR"}, "Tick at least one colour that changes")
+            return {"CANCELLED"}
+        try:
+            if fams and not all(picked):
+                # Only those colours: the rest of the texture kept as painted
+                grey, mats = colour.make_color_part(st.color_image, st.color_slot, fams, picked)
+            else:
+                grey, mats = colour.make_color_slot(st.color_image, st.color_slot)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
         if not mats:
             self.report({"WARNING"}, f"{grey.name} made, but no material uses {st.color_image.name} as its base colour")
         else:
@@ -867,6 +875,33 @@ class THEATERRIG_OT_remove_cloth(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class TheaterRigColour(bpy.types.PropertyGroup):
+    """One of the texture's colours (a family: her red and its shades)"""
+    color: bpy.props.FloatVectorProperty(subtype="COLOR_GAMMA", size=3, min=0.0, max=1.0)
+    share: bpy.props.FloatProperty()
+    change: bpy.props.BoolProperty(name="Changes", default=True, description="Follows the colour slot (unticked: kept as painted)")
+    members: bpy.props.StringProperty()
+
+
+def _colours_of_texture(state, context):
+    """The chosen texture's colours, as swatches (all ticked: the whole texture)"""
+    import json
+    from . import palette
+    state.palette.clear()
+    img = state.color_image
+    if img is None or conventions.color_slot(img.name) is not None or img.size[0] == 0:
+        return
+    try:
+        fams = palette.colours(colour.image_rgba(img))
+    except Exception:
+        return
+    for rgb, share, members in fams:
+        it = state.palette.add()
+        it.color = rgb
+        it.share = share
+        it.members = json.dumps([list(m) for m in members])
+
+
 class TheaterRigState(bpy.types.PropertyGroup):
     analysed: bpy.props.BoolProperty()
     armature: bpy.props.StringProperty()
@@ -881,10 +916,10 @@ class TheaterRigState(bpy.types.PropertyGroup):
     mtoon: bpy.props.IntProperty()
     outlines: bpy.props.IntProperty()
     color_slots: bpy.props.IntProperty()
-    color_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
+    color_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture", update=_colours_of_texture)
+    palette: bpy.props.CollectionProperty(type=TheaterRigColour)
     overlay_material: bpy.props.PointerProperty(type=bpy.types.Material, name="Material", description="The material the overlay lies on (its texture's UV layout)")
-    overlay_make_slot: bpy.props.BoolProperty(name="Colour slot", default=True, description="The overlay follows a colour slot (it's the part that changes colour; the texture under it doesn't)")
-    overlay_slot: bpy.props.IntProperty(name="Slot", min=0, max=99, default=1, description="Its colour slot's number (each part its own; two parts on one number change together)")
+
     color_slot: bpy.props.IntProperty(name="Slot", min=0, max=99)
     tile_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
     tile_columns: bpy.props.IntProperty(name="Columns", min=1, max=64, default=2)
@@ -942,6 +977,14 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         box.label(text="Colour slot", icon="COLOR")
         box.operator(THEATERRIG_OT_pick_texture.bl_idname, icon="EYEDROPPER")
         box.prop_search(st, "color_image", bpy.data, "images", text="")
+        if st.palette:
+            col = box.column(align=True)
+            col.label(text="Its colours (ticked: changes; unticked: kept as painted)")
+            for it in st.palette:
+                r = col.row(align=True)
+                r.prop(it, "change", text="")
+                r.prop(it, "color", text="")
+                r.label(text=f"{it.share * 100:.1f}%")
         box.prop(st, "color_slot", text="Color")
         row = box.row(align=True)
         row.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
@@ -950,13 +993,8 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         box.label(text="Overlay (a logo, a tattoo, painted clothes)", icon="IMAGE_RGB_ALPHA")
         box.operator(THEATERRIG_OT_pick_overlay_material.bl_idname, icon="EYEDROPPER")
         box.prop_search(st, "overlay_material", bpy.data, "materials", text="")
-        row = box.row(align=True)
-        row.prop(st, "overlay_make_slot")
-        sub = row.row(align=True)
-        sub.enabled = st.overlay_make_slot
-        sub.prop(st, "overlay_slot", text="Color")
         box.operator(THEATERRIG_OT_add_overlay.bl_idname, icon="ADD")
-        for mat, under in overlay.overlays():
+        for mat, under in [(m, u) for m, u in overlay.overlays() if colour.PART_PROP not in m]:
             row = box.row()
             row.label(text=f"{mat.name}", icon="IMAGE_RGB_ALPHA")
             row.operator(THEATERRIG_OT_remove_overlay.bl_idname, text="", icon="X").material = mat.name
@@ -1043,6 +1081,7 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
 
 
 CLASSES = (
+    TheaterRigColour,
     TheaterRigState,
     THEATERRIG_OT_analyse,
     THEATERRIG_OT_detoonify,

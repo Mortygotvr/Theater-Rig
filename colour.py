@@ -7,6 +7,7 @@ colour it had is kept as the material property `color_default` (glTF extras),
 a starting colour for the slot. The copy, and every material using the
 texture, gets Color<N> in its name. The original image is kept, unused."""
 
+import os
 import re
 
 import bpy
@@ -15,6 +16,80 @@ import numpy as np
 from . import conventions as cv
 
 DEFAULT_PROP = "color_default"
+# The Multiply node showing a slot's colour in Blender (its B: the colour)
+PREVIEW_LABEL = "Theater colour slot"
+# A colour part: the overlay Make Colour Slot lays over a texture for the
+# colours picked (the others kept as painted)
+PART_PROP = "theater_color_part"
+
+
+def sock(sockets, name):
+    """A Mix node's colour socket called `name` ("A", "B", "Result": its
+    float and vector ones have the same names)."""
+    named = [x for x in sockets if x.name == name]
+    return next((x for x in named if x.type == "RGBA"), named[0] if named else None)
+
+
+def _to_linear(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _to_srgb(c):
+    c = min(max(c, 0.0), 1.0)
+    return c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+
+
+def preview_node(mat):
+    """The Multiply node showing the slot's colour, if the material has one."""
+    if not mat or not mat.use_nodes:
+        return None
+    return next((n for n in mat.node_tree.nodes if n.type == "MIX" and n.label == PREVIEW_LABEL), None)
+
+
+def _show_colour(mat, tex, srgb):
+    """The grey texture times the slot's colour, in Blender: a Multiply node
+    (Blender's colours are linear: the sRGB colour made linear)."""
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    bsdf = next(n for n in nodes if n.type == "BSDF_PRINCIPLED")
+    mix = nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.blend_type = "MULTIPLY"
+    mix.label = PREVIEW_LABEL
+    mix.inputs["Factor"].default_value = 1.0
+    sock(mix.inputs, "B").default_value = (*[_to_linear(c) for c in srgb], 1.0)
+    mix.location = (tex.location.x + 280, tex.location.y)
+    links.new(tex.outputs["Color"], sock(mix.inputs, "A"))
+    links.new(sock(mix.outputs, "Result"), bsdf.inputs["Base Color"])
+
+
+def sync_previews():
+    """Each slot's colour from its Multiply node (changed there to try a
+    colour) into color_default, the colour Puppet starts with."""
+    for mat in bpy.data.materials:
+        node = preview_node(mat)
+        if node is not None and DEFAULT_PROP in mat:
+            mat[DEFAULT_PROP] = [_to_srgb(c) for c in sock(node.inputs, "B").default_value[:3]]
+
+
+class neutral_previews:
+    """The slots' Multiply nodes white while the GLB is written (their colour
+    is color_default: as a factor too, Puppet would apply it twice)."""
+
+    def __enter__(self):
+        sync_previews()
+        self.kept = []
+        for mat in bpy.data.materials:
+            node = preview_node(mat)
+            if node is not None:
+                b = sock(node.inputs, "B")
+                self.kept.append((b, tuple(b.default_value)))
+                b.default_value = (1.0, 1.0, 1.0, 1.0)
+        return self
+
+    def __exit__(self, *exc):
+        for b, value in self.kept:
+            b.default_value = value
+        return False
 # The grey copy remembers the texture it was made from (Remove Colour Slot)
 FROM_PROP = "theater_color_from"
 
@@ -40,8 +115,23 @@ def remove_color_slot(grey):
     if original is None:
         raise ValueError(f"{grey.name}: the texture it was made from isn't in the file any more")
     mats = [m for m in bpy.data.materials if base_image(m) == grey]
+    # A colour part: its overlay goes, the texture under it was never touched
+    if mats and all(PART_PROP in m for m in mats):
+        from . import overlay
+        under = bpy.data.images.get(original.get(PART_PROP, "")) or original
+        for mat in mats:
+            overlay.remove(mat)
+        for img in (grey, original):
+            if img.name in bpy.data.images and img != under and not img.users:
+                bpy.data.images.remove(img)
+        return under, mats
     for mat in mats:
         tex, _ = _base_link(mat)
+        node = preview_node(mat)
+        if node is not None:
+            bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+            mat.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+            mat.node_tree.nodes.remove(node)
         tex.image = original
         mt = _mtoon(mat)
         if mt is not None:
@@ -68,8 +158,8 @@ def _base_link(mat):
     node = bsdf.inputs["Base Color"].links[0].from_node
     if node.type == "TEX_IMAGE":
         return node, None
-    if node.type == "MIX" and node.blend_type == "MULTIPLY" and node.inputs["A"].links:
-        src = node.inputs["A"].links[0].from_node
+    if node.type == "MIX" and node.blend_type == "MULTIPLY" and sock(node.inputs, "A").links:
+        src = sock(node.inputs, "A").links[0].from_node
         if src.type == "TEX_IMAGE":
             return src, node
     return None, None
@@ -209,7 +299,7 @@ def make_color_slot(image, slot):
         tex, mix = _base_link(mat)
         # The colour it showed (its factor on top of the texture's) is kept as a
         # property only; the material itself goes plain grey
-        factor = np.array(mix.inputs["B"].default_value[:3]) if mix else np.ones(3)
+        factor = np.array(sock(mix.inputs, "B").default_value[:3]) if mix else np.ones(3)
         # A MToon material (not detoonified yet): its VRM data names the
         # texture and the factor too, and Detoonify / a VRM export rebuild from
         # them. They take the grey copy and white, or the old texture comes back
@@ -227,8 +317,51 @@ def make_color_slot(image, slot):
         mat[DEFAULT_PROP] = [float(c) for c in np.clip(factor * tint, 0.0, 1.0)]
         tex.image = grey
         if mix is not None:
-            bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
-            mat.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
             mat.node_tree.nodes.remove(mix)
+        # Shown in Blender as it will be: the grey times the slot's colour
+        _show_colour(mat, tex, mat[DEFAULT_PROP])
         mat.name = slot_name(mat.name, slot)
     return grey, users
+
+
+def image_rgba(image):
+    """The image's pixels, (n, 4) floats 0-1."""
+    w, h = image.size
+    px = np.empty(w * h * 4, dtype=np.float32)
+    image.pixels.foreach_get(px)
+    return px.reshape(-1, 4)
+
+
+def make_color_part(image, slot, families, picked):
+    """A colour slot on only the colours `picked` of `image` (its colour
+    `families`, palette.colours): a picture of those pixels alone (soft
+    edges, the rest transparent) laid over every material using the image
+    (overlay.py), and that picture made the slot. The texture under it isn't
+    touched: its other colours stay as painted. Returns (grey image, [overlay materials])."""
+    from . import overlay
+    from . import palette
+    rgba = image_rgba(image)
+    alpha = palette.mask(rgba, families, picked)
+    if alpha.max() <= 0.0:
+        raise ValueError("No pixel is of the colours picked")
+    part_px = rgba.copy()
+    part_px[:, 3] = alpha
+    w, h = image.size
+    stem = os.path.splitext(image.name)[0]
+    part = bpy.data.images.new(f"{stem} part", w, h, alpha=True)
+    part.colorspace_settings.name = image.colorspace_settings.name
+    part.alpha_mode = "STRAIGHT"
+    part.pixels.foreach_set(part_px.ravel())
+    part.pack()
+    part[PART_PROP] = image.name
+    users = [m for m in bpy.data.materials if base_image(m) == image and overlay.PROP not in m]
+    if not users:
+        bpy.data.images.remove(part)
+        raise ValueError(f"No material uses {image.name}")
+    mats = []
+    for base in users:
+        mat, _ = overlay.add(base, part, name=f"Color{slot}")
+        mat[PART_PROP] = True
+        mats.append(mat)
+    grey, _ = make_color_slot(part, slot)
+    return grey, [m for m in bpy.data.materials if base_image(m) == grey]
