@@ -295,7 +295,14 @@ class THEATERRIG_OT_add_overlay(bpy.types.Operator, ImportHelper):
         except Exception as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        self.report({"INFO"}, f"{mat.name}: {faces} face(s) over {base.name}")
+        st = context.scene.theater_rig
+        if st.overlay_make_slot:
+            # The overlay is what changes colour: its texture greyed, following the slot
+            colour.make_color_slot(image, st.overlay_slot)
+            self.report({"INFO"}, f"{mat.name}: {faces} face(s) over {base.name}, following Color{st.overlay_slot}")
+            bpy.ops.theater_rig.analyse()
+        else:
+            self.report({"INFO"}, f"{mat.name}: {faces} face(s) over {base.name}")
         return {"FINISHED"}
 
 
@@ -546,6 +553,36 @@ class THEATERRIG_OT_restore_tiles(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_remove_color_slot(bpy.types.Operator):
+    """Puts the chosen colour slot's texture back as it was: its materials on their own texture
+    again (colours and all), Color<N> out of their names. Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.remove_color_slot"
+    bl_label = "Remove Colour Slot"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        st = context.scene.theater_rig
+        grey = st.color_image
+        if grey is None or not conventions.color_slot(grey.name) and colour.FROM_PROP not in grey:
+            self.report({"ERROR"}, "Choose a colour slot's texture (…_Color<N>) first")
+            return {"CANCELLED"}
+        try:
+            original, mats = colour.remove_color_slot(grey)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        st.color_image = original
+        self.report({"INFO"}, f"{original.name} back on {len(mats)} material(s)")
+        bpy.ops.theater_rig.analyse()
+        return {"FINISHED"}
+
+
+def colour_users(image):
+    """The materials whose base colour is `image`."""
+    return [m for m in bpy.data.materials if colour.base_image(m) == image]
+
+
 class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
     """Makes a greyscale copy of the texture named Color<N>; the materials using it turn
     grey, get Color<N> in their name, and keep their old colour as 'color_default'. Undo with Ctrl+Z"""
@@ -553,6 +590,19 @@ class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
     bl_idname = "theater_rig.make_color_slot"
     bl_label = "Make Colour Slot"
     bl_options = {"REGISTER", "UNDO"}
+
+    def invoke(self, context, event):
+        st = context.scene.theater_rig
+        if st.color_image is not None:
+            # A texture with an overlay over it: its slot recolours what's UNDER the overlay
+            under = [m for m in colour_users(st.color_image) if overlay.over(m)]
+            if under:
+                tops = ", ".join(o.name for m in under for o in overlay.over(m))
+                return context.window_manager.invoke_confirm(
+                    self, event, title="This texture has an overlay over it",
+                    message=f"Its colour slot recolours everything UNDER the overlay ({tops}), and the overlay keeps its own colours. For the overlay's part to change colour, make the slot on the overlay's texture instead. Recolour the texture under it?",
+                    confirm_text="Recolour under it")
+        return self.execute(context)
 
     def execute(self, context):
         st = context.scene.theater_rig
@@ -833,6 +883,8 @@ class TheaterRigState(bpy.types.PropertyGroup):
     color_slots: bpy.props.IntProperty()
     color_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
     overlay_material: bpy.props.PointerProperty(type=bpy.types.Material, name="Material", description="The material the overlay lies on (its texture's UV layout)")
+    overlay_make_slot: bpy.props.BoolProperty(name="Colour slot", default=True, description="The overlay follows a colour slot (it's the part that changes colour; the texture under it doesn't)")
+    overlay_slot: bpy.props.IntProperty(name="Slot", min=0, max=99, default=1, description="Its colour slot's number (each part its own; two parts on one number change together)")
     color_slot: bpy.props.IntProperty(name="Slot", min=0, max=99)
     tile_image: bpy.props.PointerProperty(type=bpy.types.Image, name="Texture")
     tile_columns: bpy.props.IntProperty(name="Columns", min=1, max=64, default=2)
@@ -891,11 +943,18 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         box.operator(THEATERRIG_OT_pick_texture.bl_idname, icon="EYEDROPPER")
         box.prop_search(st, "color_image", bpy.data, "images", text="")
         box.prop(st, "color_slot", text="Color")
-        box.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
+        row = box.row(align=True)
+        row.operator(THEATERRIG_OT_make_color_slot.bl_idname, icon="IMAGE_ALPHA")
+        row.operator(THEATERRIG_OT_remove_color_slot.bl_idname, text="Remove", icon="LOOP_BACK")
         box = lay.box()
         box.label(text="Overlay (a logo, a tattoo, painted clothes)", icon="IMAGE_RGB_ALPHA")
         box.operator(THEATERRIG_OT_pick_overlay_material.bl_idname, icon="EYEDROPPER")
         box.prop_search(st, "overlay_material", bpy.data, "materials", text="")
+        row = box.row(align=True)
+        row.prop(st, "overlay_make_slot")
+        sub = row.row(align=True)
+        sub.enabled = st.overlay_make_slot
+        sub.prop(st, "overlay_slot", text="Color")
         box.operator(THEATERRIG_OT_add_overlay.bl_idname, icon="ADD")
         for mat, under in overlay.overlays():
             row = box.row()
@@ -993,6 +1052,7 @@ CLASSES = (
     THEATERRIG_OT_tpose,
     THEATERRIG_OT_import_mixamo,
     THEATERRIG_OT_convert_mixamo,
+    THEATERRIG_OT_remove_color_slot,
     THEATERRIG_OT_pick_overlay_material,
     THEATERRIG_OT_add_overlay,
     THEATERRIG_OT_remove_overlay,

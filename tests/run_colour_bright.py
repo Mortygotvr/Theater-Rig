@@ -46,4 +46,18 @@ orig = px[..., :3][px[..., 3] > 0.5].mean(axis=0)
 print("as it was: %s, now (grey x starting colour) %s" % (np.round(orig, 3), np.round(back, 3)))
 if np.abs(back - orig).max() > 0.01:
     problems.append("grey x starting colour isn't what it showed")
+
+# Removed: the material back on its own texture, its name and colour as they were
+mat = mats[0]
+bpy.context.scene.theater_rig.color_image = grey
+res = bpy.ops.theater_rig.remove_color_slot()
+print("removed:", res, mat.name, colour.base_image(mat).name, "color_default" in mat)
+if res != {"FINISHED"} or colour.base_image(mat) != img or mat.name != "Top" or "color_default" in mat:
+    problems.append("Remove Colour Slot didn't put it back")
+# A copy made before it remembered: found by its name ("Fabric_Color6" from "Fabric")
+grey, mats = colour.make_color_slot(img, 6)
+del grey[colour.FROM_PROP]
+original, _ = colour.remove_color_slot(grey)
+if original != img:
+    problems.append("an older copy didn't find its texture by name")
 print("PROBLEMS:" if problems else "OK", *problems, sep="\n  ")

@@ -31,6 +31,11 @@ def overlays():
     return [(m, m[PROP]) for m in bpy.data.materials if PROP in m]
 
 
+def over(material):
+    """The overlays lying on `material`."""
+    return [m for m, under in overlays() if under == material.name]
+
+
 def _material(base, image, name):
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True

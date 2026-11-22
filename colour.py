@@ -15,6 +15,48 @@ import numpy as np
 from . import conventions as cv
 
 DEFAULT_PROP = "color_default"
+# The grey copy remembers the texture it was made from (Remove Colour Slot)
+FROM_PROP = "theater_color_from"
+
+
+def unslotted_name(name):
+    """`name` without its _Color<N> (what slot_name added)."""
+    return re.sub(r"_?Color\d+", "", name, count=1, flags=re.I)
+
+
+def original_of(grey):
+    """The texture a grey copy was made from: as it remembers, else by name
+    (a copy made before it remembered: "_12_Color2" from "_12")."""
+    name = grey.get(FROM_PROP) or unslotted_name(grey.name)
+    img = bpy.data.images.get(name)
+    return img if img is not None and img != grey else None
+
+
+def remove_color_slot(grey):
+    """Puts back what Make Colour Slot changed: every material on the grey
+    copy back on its texture, its name without Color<N>, no color_default
+    (and the VRM data's texture too). Returns (the texture, [materials])."""
+    original = original_of(grey)
+    if original is None:
+        raise ValueError(f"{grey.name}: the texture it was made from isn't in the file any more")
+    mats = [m for m in bpy.data.materials if base_image(m) == grey]
+    for mat in mats:
+        tex, _ = _base_link(mat)
+        tex.image = original
+        mt = _mtoon(mat)
+        if mt is not None:
+            pbr = mt.pbr_metallic_roughness
+            if _source(pbr.base_color_texture) == grey:
+                pbr.base_color_texture.index.source = original
+            shade = getattr(mt.extensions.vrmc_materials_mtoon, "shade_multiply_texture", None)
+            if shade is not None and _source(shade) == grey:
+                shade.index.source = original
+        if DEFAULT_PROP in mat:
+            del mat[DEFAULT_PROP]
+        mat.name = unslotted_name(mat.name)
+    if not grey.users:
+        bpy.data.images.remove(grey)
+    return original, mats
 
 def _base_link(mat):
     """(image node, multiply node or None) feeding the Principled Base Color."""
@@ -157,6 +199,7 @@ def make_color_slot(image, slot):
     pixels, tint = _greyscale(image)
     w, h = image.size
     grey = bpy.data.images.new(slot_name(image.name, slot), w, h, alpha=True)
+    grey[FROM_PROP] = image.name
     grey.colorspace_settings.name = image.colorspace_settings.name
     grey.alpha_mode = image.alpha_mode
     grey.pixels.foreach_set(pixels)

@@ -53,11 +53,14 @@ n_base = counts.get(face_slot, 0)
 n_faces, n_verts, n_slots = len(body.data.polygons), len(body.data.vertices), len(body.material_slots)
 print("base:", base.name, n_base, "faces")
 
-bpy.context.scene.theater_rig.overlay_material = base
+st = bpy.context.scene.theater_rig
+st.overlay_material = base
+st.overlay_make_slot, st.overlay_slot = True, 5
+base_name = base.name
 res = bpy.ops.theater_rig.add_overlay("EXEC_DEFAULT", filepath=png)
 mats = ov.overlays()
 print("added:", res, [(m.name, under) for m, under in mats])
-if res != {"FINISHED"} or len(mats) != 1 or mats[0][1] != base.name:
+if res != {"FINISHED"} or len(mats) != 1 or mats[0][1] != base_name:
     problems.append("no overlay listed over the face")
 mat = mats[0][0] if mats else None
 slot = next((i for i, s in enumerate(body.material_slots) if s.material == mat), None)
@@ -97,10 +100,11 @@ if max(dp) > ov.LIFT * 3:
     problems.append("posed, the copy comes off the face")
 pb.rotation_euler = (0, 0, 0)
 
-# A colour slot on the overlay: still an overlay
-colour.make_color_slot(mat.node_tree.nodes["Image Texture"].image, 5)
+# The colour slot on the overlay (what changes colour), not on the texture under it
 if not any("Color5" in m.name for m, _ in ov.overlays()):
-    problems.append("the overlay lost its mark with a colour slot")
+    problems.append("the overlay isn't Color5")
+if "Color" in base.name or base.name != base_name:
+    problems.append(f"the material under it got the slot: {base.name}")
 
 # Exported: blended, its picture
 out = os.path.join(outdir, "overlay.glb")
