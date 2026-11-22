@@ -302,6 +302,31 @@ TEST = "theater_tile_test"
 TEST_LABEL = "Theater tile test"
 
 
+def _snapshot(mat):
+    """The material's Mapping node exactly (its mode, location, rotation,
+    scale), or None when it has none: what Back to Normal puts back."""
+    node = _mapping(mat)
+    if node is None:
+        return None
+    return {
+        "type": node.vector_type,
+        "location": list(node.inputs["Location"].default_value),
+        "rotation": list(node.inputs["Rotation"].default_value),
+        "scale": list(node.inputs["Scale"].default_value),
+    }
+
+
+def _put_back(mat, snap):
+    """The Mapping node as `snap` had it."""
+    node = _mapping(mat)
+    if node is None:
+        return
+    node.vector_type = snap["type"]
+    node.inputs["Location"].default_value = snap["location"]
+    node.inputs["Rotation"].default_value = snap["rotation"]
+    node.inputs["Scale"].default_value = snap["scale"]
+
+
 def _test_state(arm):
     try:
         state = json.loads(arm.get(TEST, "{}"))
@@ -328,7 +353,7 @@ def test(arm, name):
         if mat is None:
             continue
         if mat.name not in before:
-            before[mat.name] = base_transform(mat) if _mapping(mat) is not None else None
+            before[mat.name] = _snapshot(mat)
         scale, offset = b.get("scale", [1.0, 1.0]), b.get("offset", [0.0, 0.0])
         if set_base_transform(mat, [scale[0], scale[1], offset[0], offset[1]], TEST_LABEL):
             shown += 1
@@ -358,7 +383,11 @@ def restore(arm):
         mat = bpy.data.materials.get(mat_name)
         if mat is None:
             continue
+        if isinstance(st, dict):
+            _put_back(mat, st)
+            continue
         if st is not None:
+            # (A test from before: kept as glTF's placement only)
             set_base_transform(mat, st)
             continue
         # It had no Mapping node: the test's go (the texture reads the UVs again)
@@ -376,3 +405,41 @@ def restore(arm):
                 mat.node_tree.links.remove(link)
     del arm[TEST]
     return len(before)
+
+
+# Saving the .blend while a tile is tested: saved as normal (the test isn't
+# part of the avatar), then the tile shown again
+_resume = []
+
+
+@bpy.app.handlers.persistent
+def _save_pre(*_):
+    _resume.clear()
+    for obj in bpy.data.objects:
+        if obj.type == "ARMATURE" and TEST in obj:
+            name = tested(obj)
+            restore(obj)
+            if name:
+                _resume.append((obj.name, name))
+
+
+@bpy.app.handlers.persistent
+def _save_post(*_):
+    for arm_name, tile in _resume:
+        arm = bpy.data.objects.get(arm_name)
+        if arm is not None and tile in stored(arm):
+            test(arm, tile)
+    _resume.clear()
+
+
+def register_handlers():
+    if _save_pre not in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.append(_save_pre)
+    if _save_post not in bpy.app.handlers.save_post:
+        bpy.app.handlers.save_post.append(_save_post)
+
+
+def unregister_handlers():
+    for handlers, fn in ((bpy.app.handlers.save_pre, _save_pre), (bpy.app.handlers.save_post, _save_post)):
+        if fn in handlers:
+            handlers.remove(fn)

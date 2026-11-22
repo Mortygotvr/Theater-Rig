@@ -940,9 +940,11 @@ def register():
                     "Theater Puppet loops it, other viewers autoplay it. Every other animation: Export Animation"))
     if spring_preview._on_load not in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(spring_preview._on_load)
+    tiles.register_handlers()
 
 
 def unregister():
+    tiles.unregister_handlers()
     spring_preview.stop()
     if spring_preview._on_load in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(spring_preview._on_load)
