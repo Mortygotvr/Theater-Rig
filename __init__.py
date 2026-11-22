@@ -424,6 +424,38 @@ class THEATERRIG_OT_analyse(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_delete_unused_springs(bpy.types.Operator):
+    """Deletes the spring chains that bend nothing (none of their bones is weighted on the avatar's meshes in the scene): Puppet won't simulate them. Chains' end bones are kept (they set the bone before's length). Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.delete_unused_springs"
+    bl_label = "Delete Unused Spring Chains"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def invoke(self, context, event):
+        arm = an.find_armature(context)
+        if arm is None:
+            return {"CANCELLED"}
+        chains, ends = spring_preview.unused(arm)
+        if not chains:
+            self.report({"INFO"}, f"No unused spring chain (every chain bends the mesh; {ends} end bone(s) without weight kept: they set the bone before's length)")
+            return {"CANCELLED"}
+        return context.window_manager.invoke_confirm(self, event, title=f"Delete {len(chains)} unused spring chain(s)?", message=", ".join(chains[:8]) + (" …" if len(chains) > 8 else ""))
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        if arm is None:
+            return {"CANCELLED"}
+        if spring_preview.running():
+            spring_preview.stop()
+        _, ends = spring_preview.unused(arm)
+        deleted = spring_preview.delete_unused(arm)
+        if not deleted:
+            self.report({"INFO"}, "No unused spring chain")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Deleted {len(deleted)} unused chain(s): {', '.join(deleted)} ({ends} end bone(s) without weight kept)")
+        return {"FINISHED"}
+
+
 class THEATERRIG_OT_spring_groups(bpy.types.Operator):
     """One set of settings per kind of spring (hair, bust, skirt…), started from the average of each kind's chains"""
 
@@ -653,6 +685,8 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
                 grid = sub.grid_flow(columns=2, align=True)
                 for k in spring_preview.DEFAULTS:
                     grid.prop(arm.data, f'["{spring_preview.kind_key(kind, k)}"]', text=k.capitalize())
+        if groups:
+            box.operator(THEATERRIG_OT_delete_unused_springs.bl_idname, icon="TRASH")
         lay.separator()
         lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
@@ -678,6 +712,7 @@ CLASSES = (
     THEATERRIG_OT_step_tile,
     THEATERRIG_OT_restore_tiles,
     THEATERRIG_OT_spring_groups,
+    THEATERRIG_OT_delete_unused_springs,
     THEATERRIG_OT_spring_preview,
     THEATERRIG_OT_make_cloth_bones,
     THEATERRIG_OT_remove_cloth,

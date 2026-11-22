@@ -92,6 +92,82 @@ def ensure_settings(arm):
                 arm.data[kind_key(kind, k)] = round(sum(float(b[f"spring_{k}"]) for b in bones) / len(bones), 3)
 
 
+def weighted_bones(arm):
+    """The bones that bend something: weighted on a mesh the armature deforms, in the scene."""
+    out = set()
+    for o in _avatar_meshes(arm):
+        names = [g.name for g in o.vertex_groups]
+        used = set()
+        for v in o.data.vertices:
+            for g in v.groups:
+                if g.weight > 0.0:
+                    used.add(g.group)
+        out.update(names[i] for i in used if i < len(names))
+    return out
+
+
+def unused(arm):
+    """([chains that bend nothing: none of their bones is weighted], how many
+    end bones bend nothing but are kept). A chain's last bone often has no
+    weight (VRoid's end bones): it's kept, as it marks where the bone before
+    it ends (a GLB has no bone lengths: Puppet takes the next bone's head)."""
+    weighted = weighted_bones(arm)
+    chains, ends = [], 0
+    for root in roots(arm):
+        chain = chain_of(root.name)[0]
+        bones = [b.name for b in arm.data.bones if (c := chain_of(b.name)) and c[0] == chain]
+        used = [b for b in bones if b in weighted]
+        if not used:
+            chains.append(chain)
+        else:
+            ends += len(bones) - len(used)
+    return chains, ends
+
+
+def delete_unused(arm):
+    """Deletes the chains that bend nothing (unused): their bones (anything
+    hanging off them moved to their parent), their empty vertex groups, and
+    the settings of a kind left with no chain. Returns the chains deleted."""
+    chains, _ = unused(arm)
+    if not chains:
+        return []
+    gone = {b.name for b in arm.data.bones if (c := chain_of(b.name)) and c[0] in chains}
+    mode = arm.mode
+    active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    ebs = arm.data.edit_bones
+    for name in gone:
+        eb = ebs.get(name)
+        if eb is None:
+            continue
+        parent = eb.parent
+        while parent is not None and parent.name in gone:
+            parent = parent.parent
+        for child in eb.children:
+            if child.name not in gone:
+                child.parent = parent
+    for name in gone:
+        eb = ebs.get(name)
+        if eb is not None:
+            ebs.remove(eb)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    if mode != "OBJECT":
+        bpy.ops.object.mode_set(mode=mode)
+    bpy.context.view_layer.objects.active = active
+    for o in bpy.data.objects:
+        if o.type == "MESH":
+            for g in [g for g in o.vertex_groups if g.name in gone]:
+                o.vertex_groups.remove(g)
+    left = set(kinds(arm))
+    for key in list(arm.data.keys()):
+        if key.startswith("spring_") and key.count("_") >= 2:
+            kind = key.split("_")[1]
+            if kind_key(kind, key.rsplit("_", 1)[1]) == key and kind not in left:
+                del arm.data[key]
+    return chains
+
+
 def sync(arm):
     """Each kind's settings on every chain of that kind (Export, before it
     writes the GLB: Puppet reads them per chain). Returns how many chains."""
