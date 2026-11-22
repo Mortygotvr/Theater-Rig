@@ -7,7 +7,7 @@ _reloading = "bpy" in locals()
 import os
 
 import bpy
-from bpy_extras.io_utils import ExportHelper
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import conventions
 from . import analyse as an
@@ -15,6 +15,7 @@ from . import align
 from . import colour
 from . import detoon
 from . import export
+from . import mixamo
 from . import rename
 from . import springs
 from . import strip
@@ -77,6 +78,47 @@ class THEATERRIG_OT_align_bones(bpy.types.Operator):
             return {"CANCELLED"}
         self.report({"INFO"}, f"Aligned {n} bone(s)")
         return {"FINISHED"}
+
+
+class THEATERRIG_OT_import_mixamo(bpy.types.Operator, ImportHelper):
+    """Mixamo animations (FBX, with or without skin) onto the avatar: each file one
+    action named after it, on its own NLA track, exported as a clip Theater Puppet plays.
+    Needs Rename to Mixamo and a T-pose first. Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.import_mixamo"
+    bl_label = "Import Mixamo Animations"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filename_ext = ".fbx"
+    filter_glob: bpy.props.StringProperty(default="*.fbx", options={"HIDDEN"})
+    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
+    directory: bpy.props.StringProperty(subtype="DIR_PATH", options={"HIDDEN", "SKIP_SAVE"})
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        if arm is None:
+            self.report({"ERROR"}, "No armature")
+            return {"CANCELLED"}
+        bent = mixamo.not_t_posed(arm)
+        if bent:
+            self.report({"ERROR"}, "The avatar isn't in a T-pose (" + ", ".join(f"{b} {d} deg" for b, d in bent[:3]) + "): press T-Pose first")
+            return {"CANCELLED"}
+        paths = [os.path.join(self.directory, f.name) for f in self.files if f.name] or [self.filepath]
+        done, failed, lacking = [], [], set()
+        for path in paths:
+            try:
+                name, frames, _, missing = mixamo.import_fbx(context, path, arm)
+                done.append(f"{name} ({frames} frames)")
+                lacking.update(missing)
+            except Exception as e:
+                failed.append(f"{os.path.basename(path)}: {e}")
+        if failed:
+            self.report({"WARNING"}, "Not imported: " + "; ".join(failed))
+        if done:
+            extra = f"; the avatar has no {', '.join(sorted(lacking)[:6])}" if lacking else ""
+            self.report({"INFO"}, f"Imported {', '.join(done)} (each on its own NLA track, exported as a clip){extra}")
+            return {"FINISHED"}
+        return {"CANCELLED"}
 
 
 class THEATERRIG_OT_tpose(bpy.types.Operator):
@@ -333,7 +375,7 @@ class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
 
 class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
     """Removes the VRM colliders and VRM data, then exports the avatar as a GLB with the
-    options the renderer needs (custom properties, shape keys, skin; no animation).
+    options the renderer needs (custom properties, shape keys, skin, each action as a clip).
     Ctrl+Z brings the colliders and VRM data back"""
 
     bl_idname = "theater_rig.export"
@@ -641,6 +683,7 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         lay.operator(THEATERRIG_OT_rename_springs.bl_idname, icon="FORCE_WIND")
         lay.operator(THEATERRIG_OT_align_bones.bl_idname, icon="ORIENTATION_GIMBAL")
         lay.operator(THEATERRIG_OT_tpose.bl_idname, icon="ARMATURE_DATA")
+        lay.operator(THEATERRIG_OT_import_mixamo.bl_idname, icon="ACTION")
         box = lay.box()
         box.label(text="Colour slot", icon="COLOR")
         box.operator(THEATERRIG_OT_pick_texture.bl_idname, icon="EYEDROPPER")
@@ -732,6 +775,7 @@ CLASSES = (
     THEATERRIG_OT_rename_springs,
     THEATERRIG_OT_align_bones,
     THEATERRIG_OT_tpose,
+    THEATERRIG_OT_import_mixamo,
     THEATERRIG_OT_pick_texture,
     THEATERRIG_OT_make_color_slot,
     THEATERRIG_OT_pick_tile_texture,
