@@ -114,6 +114,11 @@ def remove_color_slot(grey):
     original = original_of(grey)
     if original is None:
         raise ValueError(f"{grey.name}: the texture it was made from isn't in the file any more")
+    # Rig's own fields on the grey copy count as a use: on the texture instead
+    for sc in bpy.data.scenes:
+        rs = getattr(sc, "theater_rig", None)
+        if rs is not None and rs.color_image == grey:
+            rs.color_image = original
     mats = [m for m in bpy.data.materials if base_image(m) == grey]
     # A colour part: its overlay goes, the texture under it was never touched
     if mats and all(PART_PROP in m for m in mats):
