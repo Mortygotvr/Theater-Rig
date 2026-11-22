@@ -204,6 +204,44 @@ class THEATERRIG_OT_export_animations(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class THEATERRIG_OT_remove_animations(bpy.types.Operator):
+    """Strips every animation from the avatar: its armature's and its meshes' shape keys'
+    (active, on NLA tracks, kept with a fake user), deleted. Its Default animation stays
+    unless unticked. Other skeletons' (an imported Mixamo one) are left. Undo with Ctrl+Z"""
+
+    bl_idname = "theater_rig.remove_animations"
+    bl_label = "Remove Animations"
+    bl_options = {"REGISTER", "UNDO"}
+
+    keep_default: bpy.props.BoolProperty(name="Keep the Default animation", default=True)
+
+    def invoke(self, context, event):
+        arm = an.find_armature(context)
+        if arm is None:
+            self.report({"ERROR"}, "No armature")
+            return {"CANCELLED"}
+        keep = export.default_action(arm) if self.keep_default else None
+        found = strip.avatar_animations(arm, keep)
+        if not found:
+            self.report({"INFO"}, "The avatar has no animation" + (f" (but its Default, {keep.name})" if keep else ""))
+            return {"CANCELLED"}
+        names = ", ".join(a.name for a in found[:8]) + (" …" if len(found) > 8 else "")
+        return context.window_manager.invoke_confirm(self, event, title=f"Remove {len(found)} animation(s) from the avatar?", message=names)
+
+    def execute(self, context):
+        arm = an.find_armature(context)
+        if arm is None:
+            self.report({"ERROR"}, "No armature")
+            return {"CANCELLED"}
+        gone = strip.remove_animations(arm, self.keep_default)
+        if not gone:
+            self.report({"INFO"}, "The avatar has no animation")
+            return {"CANCELLED"}
+        kept = export.default_action(arm)
+        self.report({"INFO"}, f"Removed {', '.join(gone)}" + (f" (kept the Default, {kept.name})" if kept else ""))
+        return {"FINISHED"}
+
+
 class THEATERRIG_OT_tpose(bpy.types.Operator):
     """Arms horizontal, legs straight, applied as the rest pose with shape keys kept.
     Nothing happens if the model is already in a T-pose. Undo with Ctrl+Z"""
@@ -853,6 +891,7 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         av = an.find_armature(context)
         if av is not None:
             lay.prop_search(av.data, export.DEFAULT_PROP, bpy.data, "actions", text="Default animation", icon="ACTION")
+            lay.operator(THEATERRIG_OT_remove_animations.bl_idname, icon="TRASH")
         lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
         lay.label(text="A prop or part, lined up with it (selected meshes, no armature):")
@@ -870,6 +909,7 @@ CLASSES = (
     THEATERRIG_OT_import_mixamo,
     THEATERRIG_OT_convert_mixamo,
     THEATERRIG_OT_export_animations,
+    THEATERRIG_OT_remove_animations,
     THEATERRIG_OT_pick_texture,
     THEATERRIG_OT_make_color_slot,
     THEATERRIG_OT_pick_tile_texture,

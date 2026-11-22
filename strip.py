@@ -62,3 +62,61 @@ def remove_vrm_data():
             id_.property_unset(PROP)
             cleared += 1
     return cleared
+
+
+def _anim_datas(obj):
+    """The animation data of an object and of its shape keys."""
+    out = [getattr(obj, "animation_data", None)]
+    keys = getattr(getattr(obj, "data", None), "shape_keys", None)
+    out.append(getattr(keys, "animation_data", None) if keys else None)
+    return [ad for ad in out if ad is not None]
+
+
+def _actions_in(ad):
+    out = [ad.action] if ad.action else []
+    for track in ad.nla_tracks:
+        out += [s.action for s in track.strips if s.action]
+    return out
+
+
+def avatar_animations(arm, keep=None):
+    """The avatar's animations (its armature's and its meshes' shape keys':
+    active, on NLA tracks, or kept with a fake user and moving its bones),
+    but `keep` and any another object uses (an imported Mixamo skeleton's,
+    which moves bones of the same names)."""
+    from . import anim_export
+    from . import export
+    objs = export.avatar_objects(arm)
+    here, others = set(), set()
+    for o in bpy.data.objects:
+        for ad in _anim_datas(o):
+            (here if o in objs else others).update(_actions_in(ad))
+    here |= {a for a in bpy.data.actions if a.use_fake_user and anim_export._moves_bones(a, arm)}
+    return sorted((a for a in here - others if a != keep), key=lambda a: a.name)
+
+
+def remove_animations(arm, keep_default=True):
+    """Strips the avatar's animations (avatar_animations): off its armature,
+    meshes and NLA tracks, and deleted. Its Default animation stays, unless
+    `keep_default` is False. Returns the names removed."""
+    from . import export
+    keep = export.default_action(arm) if keep_default else None
+    gone = avatar_animations(arm, keep)
+    if not gone:
+        return []
+    names = [a.name for a in gone]
+    for o in export.avatar_objects(arm):
+        for ad in _anim_datas(o):
+            if ad.action in gone:
+                ad.action = None
+            for track in list(ad.nla_tracks):
+                for s in list(track.strips):
+                    if s.action in gone:
+                        track.strips.remove(s)
+                if not track.strips:
+                    ad.nla_tracks.remove(track)
+    for a in gone:
+        bpy.data.actions.remove(a)
+    if not keep_default and getattr(arm.data, export.DEFAULT_PROP, ""):
+        setattr(arm.data, export.DEFAULT_PROP, "")
+    return names
