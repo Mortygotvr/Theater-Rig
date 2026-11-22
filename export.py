@@ -2,9 +2,12 @@
 options the renderer needs. First the tile textures are copied from the VRM
 expressions (tiles.py), then the VRM colliders and VRM data go (see
 strip.py). Custom properties go in as extras (shade_color, color_default,
-spring settings, theater_tiles); shape keys and skin are kept; no animation
-(Puppet takes them from its Animation folder: Rig's animation GLBs);
-modifiers aren't applied (that would drop the shape keys)."""
+spring settings, theater_tiles); shape keys and skin are kept; modifiers
+aren't applied (that would drop the shape keys). One animation only: the
+avatar's default (its armature's "Default animation"), first in the file,
+tagged `theater_default`: Theater Puppet loops it, other viewers autoplay it.
+The others are their own GLBs (Export Animation), in Puppet's Animation
+folder."""
 
 import bpy
 
@@ -12,6 +15,15 @@ from . import analyse as an
 from . import detoon
 from . import strip
 from . import tiles
+
+DEFAULT_PROP = "theater_default_animation"
+DEFAULT_EXTRA = "theater_default"
+
+
+def default_action(arm):
+    """The avatar's default animation (its armature's setting), if it's there."""
+    name = getattr(arm.data, DEFAULT_PROP, "") if arm else ""
+    return bpy.data.actions.get(name) if name else None
 
 
 def avatar_objects(arm):
@@ -60,6 +72,14 @@ def export_glb(context, filepath):
     was_active = view_layer.objects.active
     for o in view_layer.objects:
         o.select_set(o in objs)
+    # The default animation alone, as the armature's action (no NLA blended in)
+    act = default_action(arm)
+    ad = arm.animation_data if act is None else (arm.animation_data or arm.animation_data_create())
+    keep = (ad.action, ad.use_nla) if ad is not None else None
+    if act is not None:
+        ad.action, ad.use_nla = act, False
+    from . import contacts
+    contacts.export_as = (act.name, act) if act is not None else None
     try:
         bpy.ops.export_scene.gltf(
             filepath=filepath,
@@ -69,15 +89,20 @@ def export_glb(context, filepath):
             export_apply=False,
             export_skins=True,
             export_morph=True,
-            # No animation: the model only (animations are their own GLBs,
-            # in Puppet's Animation folder)
-            export_animations=False,
+            export_animations=act is not None,
+            export_animation_mode="ACTIVE_ACTIONS",
             export_yup=True,
         )
     finally:
+        contacts.export_as = None
+        if keep is not None:
+            ad.action, ad.use_nla = keep
         for o in view_layer.objects:
             o.select_set(o in was_selected)
         view_layer.objects.active = was_active
+    if act is not None:
+        from . import anim_export
+        anim_export._name_animation(filepath, act.name, {DEFAULT_EXTRA: True})
     return arm, found, colliders, tiled
 
 

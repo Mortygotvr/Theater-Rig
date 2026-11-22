@@ -458,7 +458,7 @@ class THEATERRIG_OT_make_color_slot(bpy.types.Operator):
 
 class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
     """Removes the VRM colliders and VRM data, then exports the avatar as a GLB with the
-    options the renderer needs (custom properties, shape keys, skin; no animation).
+    options the renderer needs (custom properties, shape keys, skin; its Default animation only).
     Ctrl+Z brings the colliders and VRM data back"""
 
     bl_idname = "theater_rig.export"
@@ -849,6 +849,10 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         if groups:
             box.operator(THEATERRIG_OT_delete_unused_springs.bl_idname, icon="TRASH")
         lay.separator()
+        # The avatar's own animation: in its GLB, looped by Puppet, autoplayed elsewhere
+        av = an.find_armature(context)
+        if av is not None:
+            lay.prop_search(av.data, export.DEFAULT_PROP, bpy.data, "actions", text="Default animation", icon="ACTION")
         lay.label(text="Last (removes colliders and VRM data):")
         lay.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
         lay.label(text="A prop or part, lined up with it (selected meshes, no armature):")
@@ -890,6 +894,10 @@ def register():
     for c in CLASSES:
         bpy.utils.register_class(c)
     bpy.types.Scene.theater_rig = bpy.props.PointerProperty(type=TheaterRigState)
+    setattr(bpy.types.Armature, export.DEFAULT_PROP, bpy.props.StringProperty(
+        name="Default animation",
+        description="The avatar's own animation (breathing, a tail, ears…): in its GLB, first, tagged as its default. "
+                    "Theater Puppet loops it, other viewers autoplay it. Every other animation: Export Animation"))
     if spring_preview._on_load not in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(spring_preview._on_load)
 
@@ -899,5 +907,6 @@ def unregister():
     if spring_preview._on_load in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(spring_preview._on_load)
     del bpy.types.Scene.theater_rig
+    delattr(bpy.types.Armature, export.DEFAULT_PROP)
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)

@@ -82,7 +82,7 @@ def actions_of(arm):
     return unique
 
 
-def _name_animation(glb, name):
+def _name_animation(glb, name, extras=None):
     """Names the GLB's animation(s) `name` (the exporter calls an active
     action's "Animation"): its JSON chunk rewritten, padded to 4 bytes."""
     import json
@@ -93,6 +93,8 @@ def _name_animation(glb, name):
     gltf = json.loads(data[20:20 + n])
     for a in gltf.get("animations", []):
         a["name"] = name
+        if extras:
+            a.setdefault("extras", {}).update(extras)
     js = json.dumps(gltf, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     js += b" " * (-len(js) % 4)
     rest = data[20 + n:]
