@@ -100,38 +100,68 @@ class THEATERRIG_OT_tpose(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class THEATERRIG_OT_pick_texture(bpy.types.Operator):
-    """Takes the base colour texture of the selected object's active material"""
+class _PickTexture:
+    """Takes the base colour texture of the selection. In Edit Mode, the selected
+    faces' (select a few faces of the part, L on it); in Object Mode, with more
+    than one texture on the selected objects, a list to choose from"""
 
+    bl_options = {"REGISTER", "INTERNAL"}
+    image: bpy.props.StringProperty(options={"SKIP_SAVE", "HIDDEN"})
+    target = ""
+
+    def _set(self, context, img, how):
+        setattr(context.scene.theater_rig, self.target, img)
+        self.report({"INFO"}, f"{img.name} ({how})")
+        return {"FINISHED"}
+
+    def invoke(self, context, event):
+        if self.image:
+            return self.execute(context)
+        found = colour.images_of_selection(context)
+        if not found:
+            where = "the selected faces" if context.mode == "EDIT_MESH" else "the selected objects"
+            self.report({"ERROR"}, f"No base colour texture on {where}")
+            return {"CANCELLED"}
+        if len(found) == 1 or context.mode == "EDIT_MESH":
+            img, names, n = found[0]
+            others = f"; also {', '.join(i.name for i, _, _ in found[1:])}: select fewer faces for those" if len(found) > 1 else ""
+            how = f"{n} selected face(s), {', '.join(names)}{others}" if n else f"from {', '.join(names)}"
+            return self._set(context, img, how)
+        idname = self.bl_idname
+
+        def draw(menu, _context):
+            col = menu.layout.column()
+            col.label(text="Tip: in Edit Mode, select faces of the part, then Pick")
+            for img, names, _ in found:
+                op = col.operator(idname, text=f"{img.name}  ({', '.join(names)})", icon_value=menu.layout.icon(img))
+                op.image = img.name
+
+        context.window_manager.popup_menu(draw, title=f"{len(found)} textures: which one?", icon="TEXTURE")
+        return {"FINISHED"}
+
+    def execute(self, context):
+        img = bpy.data.images.get(self.image) if self.image else None
+        if img is None:
+            found = colour.images_of_selection(context)
+            if not found:
+                self.report({"ERROR"}, "No base colour texture on the selection")
+                return {"CANCELLED"}
+            img = found[0][0]
+        return self._set(context, img, "chosen")
+
+
+class THEATERRIG_OT_pick_texture(_PickTexture, bpy.types.Operator):
+    __doc__ = _PickTexture.__doc__
     bl_idname = "theater_rig.pick_texture"
     bl_label = "Pick from Selected"
-    bl_options = {"REGISTER"}
-
-    def execute(self, context):
-        img, mat = colour.image_of_selection(context)
-        if img is None:
-            self.report({"ERROR"}, f"No base colour texture on {mat.name if mat else 'the selection'}")
-            return {"CANCELLED"}
-        context.scene.theater_rig.color_image = img
-        self.report({"INFO"}, f"{img.name} (from {mat.name})")
-        return {"FINISHED"}
+    target = "color_image"
 
 
-class THEATERRIG_OT_pick_tile_texture(bpy.types.Operator):
-    """Takes the base colour texture of the selected object's active material"""
-
+class THEATERRIG_OT_pick_tile_texture(_PickTexture, bpy.types.Operator):
+    __doc__ = _PickTexture.__doc__
     bl_idname = "theater_rig.pick_tile_texture"
     bl_label = "Pick from Selected"
-    bl_options = {"REGISTER"}
-
-    def execute(self, context):
-        img, mat = colour.image_of_selection(context)
-        if img is None:
-            self.report({"ERROR"}, f"No base colour texture on {mat.name if mat else 'the selection'}")
-            return {"CANCELLED"}
-        context.scene.theater_rig.tile_image = img
-        self.report({"INFO"}, f"{img.name} (from {mat.name})")
-        return {"FINISHED"}
+    target = "tile_image"
 
 
 class THEATERRIG_OT_make_tiles(bpy.types.Operator):

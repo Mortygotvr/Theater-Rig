@@ -37,11 +37,51 @@ def base_image(mat):
     return tex.image if tex else None
 
 
-def image_of_selection(context):
-    """The base colour texture of the active object's active material."""
-    obj = context.active_object
-    mat = obj.active_material if obj else None
-    return base_image(mat), mat
+def images_of_selection(context):
+    """The base colour textures the selection shows: [(image, [material names],
+    faces)], most faces first. In Edit Mode, those of the selected faces (a
+    body is one object with skin, hair, clothes… as materials: its active slot
+    says nothing of the part wanted); else every material of the selected
+    objects (faces: 0)."""
+    import bmesh
+    found = {}
+
+    def add(img, mat, faces):
+        names, n = found.get(img, ([], 0))
+        if mat.name not in names:
+            names.append(mat.name)
+        found[img] = (names, n + faces)
+
+    if context.mode == "EDIT_MESH":
+        for obj in context.objects_in_mode or [context.active_object]:
+            if obj is None or obj.type != "MESH":
+                continue
+            counts = {}
+            for f in bmesh.from_edit_mesh(obj.data).faces:
+                if f.select:
+                    counts[f.material_index] = counts.get(f.material_index, 0) + 1
+            for i, n in counts.items():
+                mat = obj.material_slots[i].material if i < len(obj.material_slots) else None
+                img = base_image(mat)
+                if img is not None:
+                    add(img, mat, n)
+    else:
+        objs = [o for o in context.selected_objects if o.type == "MESH"]
+        if context.active_object in objs:
+            objs.remove(context.active_object)
+            objs.insert(0, context.active_object)
+        # The active slot's first (a script asking without a list gets it)
+        active = context.active_object.active_material if context.active_object in objs else None
+        if base_image(active) is not None:
+            add(base_image(active), active, 0)
+        for obj in objs:
+            for s in obj.material_slots:
+                img = base_image(s.material)
+                if img is not None:
+                    add(img, s.material, 0)
+    out = [(img, names, n) for img, (names, n) in found.items()]
+    out.sort(key=lambda x: -x[2])   # stable: same faces keep their order
+    return out
 
 
 def slot_name(name, slot):
