@@ -94,6 +94,38 @@ if back.shape != mask.shape or (back != mask).any():
     problems.append("the PNG read back isn't the picture")
 print("PNG", img.size[:], "colour", px[back][0][:3].round(2) if back.any() else None)
 
+# The glass picture: the jar rendered with a glass material, the walls its
+# most opaque part, the rest lighter; the scene's settings as they were
+mat = bpy.data.materials.new("Glass")
+mat.use_nodes = True
+bsdf = mat.node_tree.nodes["Principled BSDF"]
+bsdf.inputs["Transmission Weight"].default_value = 1.0
+bsdf.inputs["Roughness"].default_value = 0.05
+jar.data.materials.append(mat)
+scene = bpy.context.scene
+before = (scene.render.engine, scene.camera, scene.world, scene.render.resolution_x, len(bpy.data.objects), len(bpy.data.cameras))
+w, h = cap.picture_size(plane, 160)
+walls, objs = cap.capture(bpy.context, plane, "SECTION", 160, 6.0)
+seen = cap.render_view(bpy.context, plane, objs, w, h, 4, "forest")
+glass = cap.glass_picture(seen, walls)
+a = glass[:, :, 3]
+print("glass", glass.shape, "render alpha in the jar's middle", round(float(seen[h // 2, w // 2, 3]), 3),
+      "walls min", round(float(a[walls].min()), 3), "rest max", round(float(a[~walls].max()), 3))
+if glass.shape[:2] != (h, w):
+    problems.append(f"glass picture {glass.shape[:2]}, not {(h, w)}")
+if a[walls].min() < cap.WALL_ALPHA - 1e-3 or a[~walls].max() > cap.BODY_ALPHA + 1e-3:
+    problems.append("glass picture: the walls aren't the most opaque part")
+if seen[..., 3].max() < 0.05:
+    problems.append("the render shows nothing")
+after = (scene.render.engine, scene.camera, scene.world, scene.render.resolution_x, len(bpy.data.objects), len(bpy.data.cameras))
+if after != before:
+    problems.append(f"the scene wasn't put back: {before} -> {after}")
+# What Scene's threshold keeps: the walls alone
+kept = a * 255 >= cap.GLASS_THRESHOLD
+if (kept != walls).any():
+    problems.append("Scene's threshold doesn't keep exactly the walls")
+cap.save_rgba(glass, os.path.join(outdir, "glass.png"))
+
 # A plane cutting nothing: an empty picture
 plane.location.z = 5
 mask, _ = cap.capture(bpy.context, plane, "SECTION", 100)
