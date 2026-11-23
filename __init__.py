@@ -1118,7 +1118,7 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
         # A liquid filling a container (Puppet's water): no avatar needed
         body = section("water", "Water (a liquid in a container)", "MOD_FLUIDSIM")
         if body:
-            body.label(text="Edit Mode: the inner wall faces; or a mesh of yours:")
+            body.label(text="Select the container (the jar):")
             body.operator(water.THEATERRIG_OT_make_water.bl_idname, icon="MOD_FLUIDSIM")
 
         if st.analysed:

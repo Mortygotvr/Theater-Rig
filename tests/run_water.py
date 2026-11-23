@@ -1,8 +1,10 @@
-"""Headless test of Make Water: a jar (an open cylinder, walls 6 mm thick),
-its inner wall and inner bottom selected in Edit Mode. The water: a closed
-mesh, its skin facing out, a little inside the glass, a lid fine enough for
-waves, the shape key water_empty, a material with theater_water. Exported
-(Export Prop): the material's extras and the key are in the GLB.
+"""Headless test of Make Water: a jar (an open cylinder with a neck, walls
+6 mm thick, even), turned and moved, wrongly marked by an earlier Make Water
+(water_empty on it, the waves on its glass material). Select it, Make Water:
+a Water object fills its inside, closed, a little inside the glass, its
+floor on the jar's inner floor, a fine lid; the jar cleaned of the marks and
+otherwise untouched. Exported (Export Prop): the material's extras and the
+key are in the GLB.
 
 blender --background --python tests/run_water.py -- <out.glb>
 """
@@ -14,7 +16,6 @@ import sys
 
 import bmesh
 import bpy
-from mathutils import Vector
 
 out = sys.argv[sys.argv.index("--") + 1:][0]
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -24,16 +25,23 @@ water = sys.modules[PKG + ".water"]
 export = sys.modules[PKG + ".export"]
 problems = []
 
-# The jar: radius 0.045, 0.12 high, open top, solidified (applied) 6 mm inward
+# The jar: radius 0.045 (0.03 at its neck), 0.12 high, open top, walls 6 mm inward
 bm = bmesh.new()
-bmesh.ops.create_cone(bm, cap_ends=True, segments=32, radius1=0.045, radius2=0.045, depth=0.12)
-bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.normal.z > 0.9], context="FACES")
+rings = [(0.0, 0.045), (0.09, 0.045), (0.105, 0.03), (0.12, 0.03)]
+loops = []
+for z, r in rings:
+    loops.append([bm.verts.new((r * math.cos(a), r * math.sin(a), z)) for a in (i / 32 * math.tau for i in range(32))])
+for a, b in zip(loops, loops[1:]):
+    for i in range(32):
+        j = (i + 1) % 32
+        bm.faces.new((a[i], a[j], b[j], b[i]))
+bm.faces.new(list(reversed(loops[0])))
+bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
 me = bpy.data.meshes.new("Jar")
 bm.to_mesh(me)
 bm.free()
 jar = bpy.data.objects.new("Jar", me)
 bpy.context.collection.objects.link(jar)
-jar.location = (0.3, 0.0, 0.06)
 bpy.context.view_layer.objects.active = jar
 jar.select_set(True)
 sol = jar.modifiers.new("S", "SOLIDIFY")
@@ -41,53 +49,67 @@ sol.thickness = 0.006
 sol.offset = -1.0
 sol.use_even_offset = True
 bpy.ops.object.modifier_apply(modifier="S")
+jar.location = (0.3, -0.1, 0.2)
+jar.rotation_euler = (0, 0, math.radians(30))
+glass = bpy.data.materials.new("Glass")
+me.materials.append(glass)
+# What the old Make Water did to it
+jar.shape_key_add(name="Basis")
+jar.shape_key_add(name=water.EMPTY_KEY)
+glass[water.PROP] = {"height": 0.004}
+bpy.context.view_layer.update()
+verts_before = len(me.vertices)
+matrix_before = jar.matrix_world.copy()
 
-# Its inner faces: the wall facing the axis, the bottom inside facing up
-for p in me.polygons:
-    c, n = p.center, p.normal
-    radial = Vector((c.x, c.y, 0)).normalized()
-    inner_wall = n.dot(radial) < -0.5
-    inner_bottom = n.z > 0.9 and c.z < 0.0
-    p.select = inner_wall or inner_bottom
-print("selected", sum(p.select for p in me.polygons), "of", len(me.polygons))
-bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.theater_rig.make_water("EXEC_DEFAULT")
 w = bpy.context.active_object
-print("water:", w.name, len(w.data.vertices), "vertices", bpy.context.mode)
+print("water:", w.name, len(w.data.vertices), "vertices")
+if w == jar:
+    problems.append("the jar itself was taken for the water")
 
+# The jar: cleaned, otherwise as it was
+if jar.data.shape_keys is not None or water.PROP in glass:
+    problems.append("the old marks are still on the jar")
+bpy.context.view_layer.update()
+if len(jar.data.vertices) != verts_before or jar.matrix_world != matrix_before:
+    problems.append("the jar was changed")
+
+# The water, in the jar's space: inside its walls
+to_jar = jar.matrix_world.inverted() @ w.matrix_world
+pts = [to_jar @ v.co for v in w.data.vertices]
 bm = bmesh.new()
 bm.from_mesh(w.data)
 open_edges = sum(1 for e in bm.edges if e.is_boundary)
 if open_edges:
     problems.append(f"not closed: {open_edges} open edges")
-# Its skin faces out: the wall faces point away from the axis
-out_ok = all(f.normal.dot(Vector((f.calc_center_median().x, f.calc_center_median().y, 0)).normalized()) > 0.3
-             for f in bm.faces if abs(f.normal.z) < 0.3)
-if not out_ok:
-    problems.append("its walls don't face out")
-# A little inside the glass (inner radius 0.039)
-rmax = max(math.hypot(v.co.x, v.co.y) for v in bm.verts)
-far = max(bm.verts, key=lambda v: math.hypot(v.co.x, v.co.y))
-print("widest", round(rmax, 5), "at z", round(far.co.z, 4), "normal", tuple(round(c, 2) for c in far.normal), "faces", len(far.link_faces))
-if not (0.0375 < rmax < 0.039):
-    problems.append(f"not just inside the glass: widest {rmax:.5f}")
-top = max(v.co.z for v in bm.verts)
-lid = [v for v in bm.verts if v.co.z > top - 0.002 and math.hypot(v.co.x, v.co.y) < 0.03]
-print("lid inside vertices", len(lid))
-if len(lid) < 30:
-    problems.append(f"the lid is too coarse for waves: {len(lid)} inside vertices")
 bm.free()
-keys = w.data.shape_keys.key_blocks if w.data.shape_keys else []
-if water.EMPTY_KEY not in keys or keys[water.EMPTY_KEY].value != 0.0:
-    problems.append("no water_empty key at 0")
+# The inner wall: 0.039 up to the shoulder, 0.024 in the neck (between: a slope)
+def inner(z):
+    if z <= 0.09:
+        return 0.039
+    if z >= 0.105:
+        return 0.024
+    return 0.039 + (0.024 - 0.039) * (z - 0.09) / 0.015
+outside = [p for p in pts if math.hypot(p.x, p.y) > inner(p.z) + 2e-3]
+print("widest", round(max(math.hypot(p.x, p.y) for p in pts), 5), "outside the glass:", len(outside))
+if outside:
+    problems.append(f"{len(outside)} points outside the glass, e.g. {tuple(round(c, 4) for c in outside[0])}")
+low, top = min(p.z for p in pts), max(p.z for p in pts)
+print("floor", round(low, 4), "top", round(top, 4))
+if not (0.006 <= low < 0.008):
+    problems.append(f"its floor at {low:.4f}, not on the jar's inner floor (0.006)")
+if top < 0.105:
+    problems.append(f"it stops at {top:.4f}, below the neck")
+lid = [p for p in pts if abs(p.z - top) < 1e-5]
+print("lid points", len(lid))
+if len(lid) < 200:
+    problems.append(f"the lid is too coarse: {len(lid)}")
 mat = w.data.materials[0]
-print("material", mat.name, dict(mat[water.PROP]))
-if abs(mat[water.PROP]["height"] - 0.004) > 1e-6:
-    problems.append("wave settings not on the material")
-if w.rotation_euler[:] != (0.0, 0.0, 0.0) or tuple(w.scale) != (1.0, 1.0, 1.0):
-    problems.append("rotation / scale not applied")
+if water.PROP not in mat or mat == glass:
+    problems.append("no wave settings on the water's own material")
+if water.EMPTY_KEY not in w.data.shape_keys.key_blocks:
+    problems.append("no water_empty key")
 
-# Exported as a prop: the extras and the key in the GLB
 for o in bpy.context.view_layer.objects:
     o.select_set(o == w)
 export.export_prop(bpy.context, out)
@@ -98,9 +120,7 @@ g = json.loads(data[20:20 + n])
 extras = [m.get("extras", {}) for m in g["materials"]]
 targets = [m.get("extras", {}).get("targetNames", []) for m in g["meshes"]]
 print("GLB material extras", extras, "targets", targets)
-if not any("theater_water" in e for e in extras):
-    problems.append("theater_water not in the GLB")
-if not any(water.EMPTY_KEY in t for t in targets):
-    problems.append("water_empty not in the GLB")
+if not any("theater_water" in e for e in extras) or not any(water.EMPTY_KEY in t for t in targets):
+    problems.append("the waves or the key aren't in the GLB")
 
 print("PROBLEMS:" if problems else "OK", *problems, sep="\n  ")
