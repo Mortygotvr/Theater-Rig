@@ -75,4 +75,27 @@ if anims(out) != [("Breathe", True)]:
 if ad.action != wave or not ad.use_nla or len(ad.nla_tracks) != 1:
     problems.append("the avatar's action or NLA changed")
 
+# A blendshape animation (on a mesh's shape keys, not the armature) as default
+face = next(o for o in bpy.data.objects if o.type == "MESH" and o.data.shape_keys and len(o.data.shape_keys.key_blocks) > 1)
+kb = face.data.shape_keys.key_blocks[1]
+for f, v in ((1, 0.0), (12, 1.0), (24, 0.0)):
+    kb.value = v
+    kb.keyframe_insert("value", frame=f)
+kb.value = 0.0
+shape_act = face.data.shape_keys.animation_data.action
+shape_act.name = "Blink"
+shape_act.use_fake_user = True
+setattr(arm.data, export.DEFAULT_PROP, "Blink")
+out = os.path.join(outdir, "shape_default.glb")
+export.export_glb(bpy.context, out)
+with open(out, "rb") as f:
+    data = f.read()
+n = struct.unpack("<I", data[12:16])[0]
+paths = [c["target"]["path"] for a in json.loads(data[20:20 + n]).get("animations", []) for c in a["channels"]]
+print("shape key default:", anims(out), set(paths))
+if anims(out) != [("Blink", True)] or "weights" not in paths:
+    problems.append(f"shape key default: {anims(out)}, {set(paths)}")
+if face.data.shape_keys.animation_data.action != shape_act or ad.action != wave:
+    problems.append("the shape keys' or the avatar's action changed")
+
 print("PROBLEMS:" if problems else "OK", *problems, sep="\n  ")

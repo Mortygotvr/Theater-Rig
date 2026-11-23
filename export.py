@@ -9,6 +9,8 @@ tagged `theater_default`: Theater Puppet loops it, other viewers autoplay it.
 The others are their own GLBs (Export Animation), in Puppet's Animation
 folder."""
 
+import re
+
 import bpy
 
 from . import analyse as an
@@ -24,6 +26,43 @@ def default_action(arm):
     """The avatar's default animation (its armature's setting), if it's there."""
     name = getattr(arm.data, DEFAULT_PROP, "") if arm else ""
     return bpy.data.actions.get(name) if name else None
+
+
+def slots_of(act, id_type):
+    """The action's slots for `id_type` ("OBJECT": bones, "KEY": shape keys).
+    Before Blender 4.4 (no slots): [None] if the action is for that type."""
+    if hasattr(act, "slots"):
+        return [s for s in act.slots if s.target_id_type == id_type]
+    root = getattr(act, "id_root", "OBJECT") or "OBJECT"
+    return [None] if root == id_type else []
+
+
+def keyed_shapes(act, slot):
+    """The names of the shape keys the action's `slot` moves."""
+    paths = []
+    if slot is not None:
+        for layer in act.layers:
+            for strip in layer.strips:
+                bag = strip.channelbag(slot) if hasattr(strip, "channelbag") else None
+                if bag is not None:
+                    paths += [fc.data_path for fc in bag.fcurves]
+    else:
+        paths = [fc.data_path for fc in getattr(act, "fcurves", [])]
+    return {m.group(1) for m in (re.match(r'key_blocks\["(.+?)"\]', p) for p in paths) if m}
+
+
+def default_targets(act, arm, objs):
+    """Where the Default animation plays: (datablock, slot) pairs. Its bones on
+    the armature; its shape keys (a blendshape animation lives on the mesh's
+    shape keys, not on the armature) on each avatar mesh having those keys."""
+    out = [(arm, s) for s in slots_of(act, "OBJECT")[:1]]
+    for slot in slots_of(act, "KEY"):
+        names = keyed_shapes(act, slot)
+        for o in objs:
+            key = getattr(getattr(o, "data", None), "shape_keys", None) if o.type == "MESH" else None
+            if key is not None and all(key is not k for k, _ in out) and (not names or any(n in key.key_blocks for n in names)):
+                out.append((key, slot))
+    return out
 
 
 def avatar_objects(arm):
@@ -72,12 +111,28 @@ def export_glb(context, filepath):
     was_active = view_layer.objects.active
     for o in view_layer.objects:
         o.select_set(o in objs)
-    # The default animation alone, as the armature's action (no NLA blended in)
+    # The default animation alone (no NLA blended in): its bones as the
+    # armature's action, its shape keys as the meshes' shape keys' action.
+    # Everything else animated stays out (the others' actions off meanwhile)
     act = default_action(arm)
-    ad = arm.animation_data if act is None else (arm.animation_data or arm.animation_data_create())
-    keep = (ad.action, ad.use_nla) if ad is not None else None
-    if act is not None:
-        ad.action, ad.use_nla = act, False
+    targets = default_targets(act, arm, objs) if act is not None else []
+    if act is not None and not targets:
+        found.append(f"Default animation '{act.name}' moves nothing of this avatar: not exported")
+        act = None
+    held = [arm] + [o.data.shape_keys for o in objs if o.type == "MESH" and getattr(o.data, "shape_keys", None)]
+    keep = []
+    for idb in held:
+        ad = idb.animation_data
+        if ad is None and act is None:
+            continue
+        ad = ad or idb.animation_data_create()
+        keep.append((ad, ad.action, getattr(ad, "action_slot", None), ad.use_nla))
+        ad.action, ad.use_nla = None, False
+    for idb, slot in targets:
+        ad = idb.animation_data
+        ad.action = act
+        if slot is not None:
+            ad.action_slot = slot
     from . import contacts
     contacts.export_as = (act.name, act) if act is not None else None
     from . import colour
@@ -98,8 +153,14 @@ def export_glb(context, filepath):
     finally:
         previews.__exit__(None, None, None)
         contacts.export_as = None
-        if keep is not None:
-            ad.action, ad.use_nla = keep
+        for ad, action, slot, nla in keep:
+            ad.action = action
+            if slot is not None and action is not None:
+                try:
+                    ad.action_slot = slot
+                except Exception:
+                    pass
+            ad.use_nla = nla
         for o in view_layer.objects:
             o.select_set(o in was_selected)
         view_layer.objects.active = was_active
