@@ -172,7 +172,7 @@ class THEATERRIG_OT_export_animations(bpy.types.Operator):
     """The selected skeletons' animations (any armature with Mixamo bone names, in a
     T-pose: an imported Mixamo one, the avatar's…) as animation GLBs for Theater
     Puppet's Animation folder: each action its own GLB, named after it, with its
-    contact frames. Any avatar plays them. (Export GLB has no animation)"""
+    impact frames. Any avatar plays them. (Export GLB has no animation)"""
 
     bl_idname = "theater_rig.export_animations"
     bl_label = "Export Animation"

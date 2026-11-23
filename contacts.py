@@ -1,17 +1,18 @@
-"""Contact frames: the frames of an animation where it touches something (a
-pie lands on the face, a sword hits). Theater Scene runs a GLB prefab
-redeem's contact section (sound, shake, the avatar's reaction) at each, as
-a throwable's on impact, with no physics: the animation is baked.
+"""Impact frames: the frames of an animation where it hits something (a pie
+lands on the face, a sword hits). Theater Scene runs a GLB prefab redeem's
+Impact settings (Impact Audio, Screen Shake and Impact Reaction On Impact)
+at each, as a throwable's hit, with no physics: the animation is baked.
 
-They're markers named "contact" (or "contact 2", "Contact: splash"…, any
-name starting with it, any case): the timeline's, for whichever animation
-spans their frame, or an action's own pose markers, for that one. The glTF
-export writes each animation's as its extras, `theater_contacts`: seconds
-from the animation's first frame (as Theater Puppet times it)."""
+They're markers named "impact" (or "impact 2", "Impact: splash"…, any name
+starting with it, any case; "contact", their old name, too): the timeline's,
+for whichever animation spans their frame, or an action's own pose markers,
+for that one. The glTF export writes each animation's as its extras,
+`theater_contacts` (the file's name for them, kept so older GLBs still
+work): seconds from the animation's first frame (as Theater Puppet times it)."""
 
 import bpy
 
-WORD = "contact"
+WORDS = ("impact", "contact")
 EXTRA = "theater_contacts"
 # Export Animations (anim_export.py): (the clip's name, its action) while one
 # action is exported alone (the exporter calls it "Animation")
@@ -19,7 +20,7 @@ export_as = None
 
 
 def is_contact(marker):
-    return marker.name.strip().lower().startswith(WORD)
+    return marker.name.strip().lower().startswith(WORDS)
 
 
 def fps(scene):
@@ -27,8 +28,8 @@ def fps(scene):
 
 
 def times(action, scene):
-    """An action's contacts: seconds from its first frame, in order. Its own
-    pose markers when it has contact ones, else the timeline's in its range."""
+    """An action's impacts: seconds from its first frame, in order. Its own
+    pose markers when it has impact ones, else the timeline's in its range."""
     start, end = action.frame_range
     own = [m.frame for m in getattr(action, "pose_markers", []) if is_contact(m)]
     frames = own if own else [m.frame for m in scene.timeline_markers if is_contact(m) and start - 1e-4 <= m.frame <= end + 1e-4]
@@ -37,7 +38,7 @@ def times(action, scene):
 
 
 class glTF2ExportUserExtension:
-    """The glTF exporter's hook: each animation's contacts in its extras."""
+    """The glTF exporter's hook: each animation's impacts in its extras."""
 
     def gather_gltf_hook(self, active_scene_idx, scenes, animations, export_settings):
         scene = bpy.context.scene

@@ -2,7 +2,7 @@
 Puppet's Animation folder, where any avatar plays them (retarget.rs). Any
 armature with Mixamo's bone names (Hips, Spine, LeftArm…) in a T-pose: an
 imported Mixamo one, the avatar's, a copy of it. Each action is its own GLB,
-named after it: the skeleton (no mesh) and that one clip, with its contact
+named after it: the skeleton (no mesh) and that one clip, with its impact
 frames. The avatar's GLB (Export GLB) has no animation.
 
 The actions: its active one and those on its NLA tracks. Not the VRM
