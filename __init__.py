@@ -27,6 +27,7 @@ from . import tpose
 from . import spring_preview
 from . import cloth_bones
 from . import contacts
+from . import capture
 
 # The glTF exporter calls enabled add-ons' hooks: contact frames (contacts.py)
 glTF2ExportUserExtension = contacts.glTF2ExportUserExtension
@@ -40,7 +41,7 @@ if _reloading:
         spring_preview.stop()
     except Exception:
         pass
-    _order = (conventions, an, rename, detoon, springs, align, tpose, contacts, colour, overlay, strip, tiles, anim_export, mixamo, export, spring_preview, cloth_bones)
+    _order = (conventions, an, rename, detoon, springs, align, tpose, contacts, colour, overlay, strip, tiles, anim_export, mixamo, export, spring_preview, cloth_bones, capture)
     for _module in _order:
         importlib.reload(_module)
     # Every other file of it loaded (palette.py, dae.py…: imported where
@@ -1106,6 +1107,13 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
             body.operator(THEATERRIG_OT_export_animations.bl_idname, icon="EXPORT")
             body.operator(THEATERRIG_OT_convert_mixamo.bl_idname, icon="FILE_REFRESH")
 
+        # A picture for Theater Scene (a hitbox, a border): no avatar needed
+        body = section("capture", "Capture Image (hitbox, border)", "IMAGE_PLANE")
+        if body:
+            body.label(text="A plane says where; the picture covers it:")
+            body.operator(capture.THEATERRIG_OT_add_capture_plane.bl_idname, icon="MESH_PLANE")
+            body.operator(capture.THEATERRIG_OT_save_capture.bl_idname, icon="IMAGE_DATA")
+
         if st.analysed:
             body = section("export", "Export", "EXPORT", closed=False)
             if body:
@@ -1151,6 +1159,7 @@ CLASSES = (
     THEATERRIG_OT_remove_cloth,
     THEATERRIG_OT_export,
     THEATERRIG_OT_export_prop,
+    *capture.CLASSES,
     THEATERRIG_PT_panel,
 )
 
