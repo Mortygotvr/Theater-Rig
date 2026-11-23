@@ -1,7 +1,7 @@
-"""Headless test of Export Prop GLB: a mesh parented to an armature (moved,
-turned, its bone posed) exported alone: no armature, no skin, its shape key
-kept, and every vertex exactly where it is in Blender at rest (in glTF's Y up),
-so Theater Puppet draws it lined up with the avatar.
+"""Headless test of Export Prop GLB: a mesh bound to an armature (moved,
+turned, its bone posed) exported with it, skinned (so Theater Puppet makes it
+follow the avatar), its shape key kept, and every vertex exactly where it is
+in Blender at rest (in glTF's Y up, through the skin), so it lines up.
 
 blender --background --python tests/run_prop_export.py -- <out.glb>
 """
@@ -83,11 +83,11 @@ with open(out, "rb") as f:
 n = struct.unpack("<I", data[12:16])[0]
 gltf = json.loads(data[20:20 + n])
 binary = data[20 + n + 8:]
-if gltf.get("skins"):
-    problems.append("it has a skin")
+if len(gltf.get("skins", [])) != 1:
+    problems.append("no skin")
 names = [x.get("name") for x in gltf["nodes"]]
-if "Armature" in names or "Hips" in names:
-    problems.append(f"the armature came along: {names}")
+if "Hips" not in names:
+    problems.append(f"the armature didn't come along: {names}")
 
 
 def node_matrix(node):
@@ -115,7 +115,21 @@ acc = gltf["accessors"][mesh["primitives"][0]["attributes"]["POSITION"]]
 view = gltf["bufferViews"][acc["bufferView"]]
 start = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
 pos = np.frombuffer(binary[start:start + acc["count"] * 12], dtype="<f4").reshape(-1, 3)
-M = world(mesh_node)
+def floats(i, n):
+    a = gltf["accessors"][i]
+    v = gltf["bufferViews"][a["bufferView"]]
+    st = v.get("byteOffset", 0) + a.get("byteOffset", 0)
+    return np.frombuffer(binary[st:st + a["count"] * n * 4], dtype="<f4").reshape(-1, n)
+
+
+if "skin" in gltf["nodes"][mesh_node]:
+    # Skinned (the glTF way: the mesh node's place ignored): the one bone's
+    # place at rest times its inverse bind matrix
+    skin = gltf["skins"][gltf["nodes"][mesh_node]["skin"]]
+    ibm = floats(skin["inverseBindMatrices"], 16)[0].reshape(4, 4).T
+    M = world(skin["joints"][0]) @ ibm
+else:
+    M = world(mesh_node)
 got = (M[:3, :3] @ pos.T).T + M[:3, 3]
 # Each of Blender's vertices has one at the same place in the GLB (the exporter may split them)
 worst = max(np.min(np.linalg.norm(got - w, axis=1)) for w in want)

@@ -171,10 +171,12 @@ def export_glb(context, filepath):
 
 
 def export_prop(context, filepath):
-    """The selected meshes alone, without the armature (no skin): each where it
-    is next to the avatar, its rest shape (armature modifiers off for the
-    export), its shape keys and custom properties kept. A prop or a part that
-    Theater Puppet draws as an Also draw GLB lines up with the avatar.
+    """The selected meshes: each where it is next to the avatar, its shape keys
+    and custom properties kept, so a prop or a part Theater Puppet draws with
+    the avatar lines up. Bound to an armature (an Armature modifier): with it
+    and its skin, so in Puppet it follows the avatar (bones of the same names);
+    else in its rest shape. Its animations: its shape keys' actions (the
+    armature's would be the avatar's, fighting the follow).
     Returns the meshes exported (none: nothing selected)."""
     if context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -184,14 +186,15 @@ def export_prop(context, filepath):
         return []
     was_selected = [o for o in view_layer.objects if o.select_get()]
     was_active = view_layer.objects.active
-    # Their rest shape: the armature's pose doesn't bend them on the way out
-    switched = [(m, m.show_viewport, m.show_render) for o in meshes for m in o.modifiers if m.type == "ARMATURE"]
-    for m, _, _ in switched:
-        m.show_viewport = False
-        m.show_render = False
-    animated = [o for o in meshes if getattr(o.data, "shape_keys", None) and o.data.shape_keys.animation_data]
+    # The armature(s) they're bound to go with them, skinned (they follow)
+    armatures = []
+    for o in meshes:
+        for m in o.modifiers:
+            if m.type == "ARMATURE" and m.object is not None and m.object not in armatures:
+                armatures.append(m.object)
+    names = prop_actions(meshes)
     for o in view_layer.objects:
-        o.select_set(o in meshes)
+        o.select_set(o in meshes or o in armatures)
     try:
         bpy.ops.export_scene.gltf(
             filepath=filepath,
@@ -199,19 +202,55 @@ def export_prop(context, filepath):
             use_selection=True,
             export_extras=True,
             export_apply=False,
-            export_skins=False,
+            export_skins=bool(armatures),
             export_morph=True,
             # Their shape keys' animations (a blendshape prop: a tentacle
             # waving), each its own clip named after its action
-            export_animations=bool(animated),
+            export_animations=bool(names),
             export_animation_mode="ACTIONS",
             export_yup=True,
         )
     finally:
-        for m, viewport, render in switched:
-            m.show_viewport = viewport
-            m.show_render = render
         for o in view_layer.objects:
             o.select_set(o in was_selected)
         view_layer.objects.active = was_active
+    if names:
+        keep_animations(filepath, names)
     return meshes
+
+
+def prop_actions(meshes):
+    """The names of the actions on the meshes' shape keys (active, NLA tracks)."""
+    names = []
+    for o in meshes:
+        key = getattr(o.data, "shape_keys", None)
+        ad = key.animation_data if key is not None else None
+        if ad is None:
+            continue
+        for a in [ad.action] + [st.action for t in ad.nla_tracks for st in t.strips]:
+            if a is not None and a.name not in names:
+                names.append(a.name)
+    return names
+
+
+def keep_animations(glb, names):
+    """Only the GLB's animations called `names` (the exporter's every-action
+    mode adds every action an armature in it could play): its JSON rewritten."""
+    import json
+    import struct
+    with open(glb, "rb") as f:
+        data = f.read()
+    n = struct.unpack("<I", data[12:16])[0]
+    gltf = json.loads(data[20:20 + n])
+    anims = [a for a in gltf.get("animations", []) if a.get("name") in names]
+    if len(anims) == len(gltf.get("animations", [])):
+        return
+    if anims:
+        gltf["animations"] = anims
+    else:
+        gltf.pop("animations", None)
+    js = json.dumps(gltf, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    js += b" " * (-len(js) % 4)
+    body = struct.pack("<I", len(js)) + b"JSON" + js + data[20 + n:]
+    with open(glb, "wb") as f:
+        f.write(data[:8] + struct.pack("<I", 12 + len(body)) + body)

@@ -673,9 +673,10 @@ class THEATERRIG_OT_export(bpy.types.Operator, ExportHelper):
 
 
 class THEATERRIG_OT_export_prop(bpy.types.Operator, ExportHelper):
-    """Exports the selected meshes alone, without the armature (no skin): each where it is
-    next to the avatar, in its rest shape, its shape keys kept. For a prop or a part Theater
-    Puppet draws with the avatar (Also draw): it lines up. Nothing is removed from the scene"""
+    """Exports the selected meshes, each where it is next to the avatar, its shape keys and
+    their animations kept. Bound to an armature: with it and its skin, so in Theater Puppet it
+    follows the avatar. For a prop (redeem) or a part (Also draw): it lines up. Nothing is
+    removed from the scene"""
 
     bl_idname = "theater_rig.export_prop"
     bl_label = "Export Prop GLB"
@@ -699,7 +700,9 @@ class THEATERRIG_OT_export_prop(bpy.types.Operator, ExportHelper):
         if not meshes:
             self.report({"ERROR"}, "Select the prop's mesh(es) first")
             return {"CANCELLED"}
-        self.report({"INFO"}, f"Exported {os.path.basename(self.filepath)}: {', '.join(o.name for o in meshes)} (no armature)")
+        bound = sorted({m.object.name for o in meshes for m in o.modifiers if m.type == "ARMATURE" and m.object})
+        how = f"with {', '.join(bound)} (follows the avatar)" if bound else "no armature"
+        self.report({"INFO"}, f"Exported {os.path.basename(self.filepath)}: {', '.join(o.name for o in meshes)}, {how}")
         return {"FINISHED"}
 
 
@@ -1112,7 +1115,7 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
                     body.operator(THEATERRIG_OT_remove_animations.bl_idname, icon="TRASH")
                 body.label(text="Last (removes colliders and VRM data):")
                 body.operator(THEATERRIG_OT_export.bl_idname, icon="EXPORT")
-                body.label(text="A prop or part, lined up with it (selected meshes, no armature):")
+                body.label(text="A prop or part, lined up with it (selected meshes; bound: follows):")
                 body.operator(THEATERRIG_OT_export_prop.bl_idname, icon="EXPORT")
 
 CLASSES = (

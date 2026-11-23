@@ -84,4 +84,39 @@ print("plain:", anims(out))
 if anims(out):
     problems.append(f"plain prop has animations: {anims(out)}")
 
+# Bound to an armature (an avatar's, animated): it goes with it, skinned; the
+# armature's action stays out, the shape keys' are in
+bpy.ops.object.armature_add()
+arm = bpy.context.active_object
+arm.name = "Avatar"
+arm.data.bones[0].name = "Spine"
+arm.animation_data_create()
+wave = bpy.data.actions.new("AvatarWave")
+wave.use_fake_user = True
+arm.animation_data.action = wave
+pb = arm.pose.bones["Spine"]
+for f, a in ((1, 0.0), (12, 0.5)):
+    pb.rotation_quaternion = (1, a, 0, 0)
+    pb.keyframe_insert("rotation_quaternion", frame=f)
+pb.rotation_quaternion = (1, 0, 0, 0)
+prop.vertex_groups.new(name="Spine").add(range(len(prop.data.vertices)), 1.0, "REPLACE")
+mod = prop.modifiers.new("Armature", "ARMATURE")
+mod.object = arm
+for o in bpy.context.view_layer.objects:
+    o.select_set(o == prop)
+out = os.path.join(outdir, "bound.glb")
+export.export_prop(bpy.context, out)
+with open(out, "rb") as f:
+    data = f.read()
+n = struct.unpack("<I", data[12:16])[0]
+g = json.loads(data[20:20 + n])
+nodes = [x.get("name") for x in g["nodes"]]
+print("bound:", anims(out), "skins", len(g.get("skins", [])), nodes)
+if len(g.get("skins", [])) != 1 or "Spine" not in nodes or "Other" in nodes:
+    problems.append(f"bound prop: skins {len(g.get('skins', []))}, nodes {nodes}")
+if [a for a, _ in anims(out)] != ["Pulse", "Wiggle"]:
+    problems.append(f"bound prop animations: {anims(out)}")
+if not mod.show_viewport or arm.animation_data.action != wave:
+    problems.append("the armature modifier or the armature's action changed")
+
 print("PROBLEMS:" if problems else "OK", *problems, sep="\n  ")
