@@ -189,6 +189,7 @@ def export_prop(context, filepath):
     for m, _, _ in switched:
         m.show_viewport = False
         m.show_render = False
+    animated = [o for o in meshes if getattr(o.data, "shape_keys", None) and o.data.shape_keys.animation_data]
     for o in view_layer.objects:
         o.select_set(o in meshes)
     try:
@@ -200,7 +201,10 @@ def export_prop(context, filepath):
             export_apply=False,
             export_skins=False,
             export_morph=True,
-            export_animations=False,
+            # Their shape keys' animations (a blendshape prop: a tentacle
+            # waving), each its own clip named after its action
+            export_animations=bool(animated),
+            export_animation_mode="ACTIONS",
             export_yup=True,
         )
     finally:
