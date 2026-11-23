@@ -28,6 +28,7 @@ from . import spring_preview
 from . import cloth_bones
 from . import contacts
 from . import capture
+from . import water
 
 # The glTF exporter calls enabled add-ons' hooks: contact frames (contacts.py)
 glTF2ExportUserExtension = contacts.glTF2ExportUserExtension
@@ -41,7 +42,7 @@ if _reloading:
         spring_preview.stop()
     except Exception:
         pass
-    _order = (conventions, an, rename, detoon, springs, align, tpose, contacts, colour, overlay, strip, tiles, anim_export, mixamo, export, spring_preview, cloth_bones, capture)
+    _order = (conventions, an, rename, detoon, springs, align, tpose, contacts, colour, overlay, strip, tiles, anim_export, mixamo, export, spring_preview, cloth_bones, capture, water)
     for _module in _order:
         importlib.reload(_module)
     # Every other file of it loaded (palette.py, dae.py…: imported where
@@ -1114,6 +1115,12 @@ class THEATERRIG_PT_panel(bpy.types.Panel):
             body.operator(capture.THEATERRIG_OT_add_capture_plane.bl_idname, icon="MESH_PLANE")
             body.operator(capture.THEATERRIG_OT_save_capture.bl_idname, icon="IMAGE_DATA")
 
+        # A liquid filling a container (Puppet's water): no avatar needed
+        body = section("water", "Water (a liquid in a container)", "MOD_FLUIDSIM")
+        if body:
+            body.label(text="Edit Mode: the inner wall faces; or a mesh of yours:")
+            body.operator(water.THEATERRIG_OT_make_water.bl_idname, icon="MOD_FLUIDSIM")
+
         if st.analysed:
             body = section("export", "Export", "EXPORT", closed=False)
             if body:
@@ -1160,6 +1167,7 @@ CLASSES = (
     THEATERRIG_OT_export,
     THEATERRIG_OT_export_prop,
     *capture.CLASSES,
+    *water.CLASSES,
     THEATERRIG_PT_panel,
 )
 
